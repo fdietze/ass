@@ -1,6 +1,54 @@
 {
   "lockfile_version": "1",
   "packages": {
+    "bacon@latest": {
+      "last_modified": "2025-06-20T02:24:11Z",
+      "resolved": "github:NixOS/nixpkgs/076e8c6678d8c54204abcb4b1b14c366835a58bb#bacon",
+      "source": "devbox-search",
+      "version": "3.16.0",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/gsjlp9vhg1pb9wdwyhwn49ny3lyyip1w-bacon-3.16.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/gsjlp9vhg1pb9wdwyhwn49ny3lyyip1w-bacon-3.16.0"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/0x33hcdb6mhywnh3bjc998brjamcdbl9-bacon-3.16.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/0x33hcdb6mhywnh3bjc998brjamcdbl9-bacon-3.16.0"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/bvk5y03z5h9qh9ja4f894mbf9ycvm2jy-bacon-3.16.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/bvk5y03z5h9qh9ja4f894mbf9ycvm2jy-bacon-3.16.0"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/0qzlkickgrmn3996h4ji5wnqvk6y51fx-bacon-3.16.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/0qzlkickgrmn3996h4ji5wnqvk6y51fx-bacon-3.16.0"
+        }
+      }
+    },
     "cargo-udeps@latest": {
       "last_modified": "2025-07-07T01:36:15Z",
       "resolved": "github:NixOS/nixpkgs/2defa37146df235ef62f566cde69930a86f14df1#cargo-udeps",

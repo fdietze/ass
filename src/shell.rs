@@ -1,4 +1,5 @@
 use anyhow::Result;
+use colored::Colorize;
 use openrouter_api::models::tool::{FunctionDescription, Tool};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
@@ -47,7 +48,7 @@ pub fn execute_shell_command(command: &str) -> Result<String> {
         let error_message = format!(
             "Error: Command '{command}' is not allowed. Only commands starting with {WHITELISTED_COMMAND_PREFIXES:?} are permitted."
         );
-        println!("{error_message}");
+        println!("{}", error_message.red());
         return Err(anyhow::anyhow!(error_message));
     }
 
@@ -59,8 +60,10 @@ pub fn execute_shell_command(command: &str) -> Result<String> {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let status = output.status;
 
-    let result =
-        format!("> {command}\n# Stdout:\n{stdout}\n# Stderr:\n{stderr}\n# Exit Code: {status}",);
+    let command_bold = command.bold();
+    let result = format!(
+        "> {command_bold}\n# Stdout:\n{stdout}\n# Stderr:\n{stderr}\n# Exit Code: {status}",
+    );
 
     Ok(result)
 }
