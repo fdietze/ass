@@ -1,0 +1,77 @@
+[
+  {
+    "action": "message",
+    "content": "Joghurt, oh yoghurt\nSo creamy, so smooth\nA spoonful, a smile\nA treat in each groove\n"
+  },
+  {
+    "action": "save",
+    "content": {
+      "history": [
+        {
+          "from": "user",
+          "message": "Please create a shopping list"
+        },
+        {
+          "from": "assistant",
+          "message": "Sure, I can help you with that. What items do you want to add to your shopping list?"
+        },
+        {
+          "from": "user",
+          "message": "cheese, tomatos"
+        },
+        {
+          "from": "assistant",
+          "message": "I have added cheese and tomatoes to your shopping list."
+        },
+        {
+          "from": "user",
+          "message": "also add milk"
+        },
+        {
+          "from": "assistant",
+          "message": "I have added milk to your shopping list."
+        },
+        {
+          "from": "user",
+          "message": "also add carrots"
+        },
+        {
+          "from": "user",
+          "message": "remove carrots"
+        },
+        {
+          "from": "user",
+          "message": "add bananas to my shopping list"
+        },
+        {
+          "from": "assistant",
+          "message": "I have added bananas to your shopping list."
+        },
+        {
+          "from": "user",
+          "message": "remove bananas"
+        },
+        {
+          "from": "user",
+          "message": "what's the radius of earth?"
+        },
+        {
+          "from": "assistant",
+          "message": "The radius of Earth is approximately 3,959 miles."
+        },
+        {
+          "from": "user",
+          "message": "and of the moon?"
+        },
+        {
+          "from": "assistant",
+          "message": "The radius of the moon is approximately 1,079 miles."
+        },
+        {
+          "from": "user",
+          "message": "write a poem about joghurt"
+        }
+      ]
+    }
+  }
+]
