@@ -1,4 +1,5 @@
 use anyhow::Result;
+use clap::Parser;
 use openrouter_api::{
     OpenRouterClient,
     types::chat::{ChatCompletionRequest, Message},
@@ -13,9 +14,33 @@ use crate::ui::pretty_print_message;
 
 // --- Constants ---
 const MODEL_NAME: &str = "google/gemini-2.5-flash-preview";
+// const MODEL_NAME: &str = "google/gemini-2.5-pro";
+
+/// A simple command-line agent
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Parser, Debug)]
+enum Commands {
+    /// Run the agent with a prompt
+    Agent {
+        /// The prompt for the agent
+        prompt: String,
+    },
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    let prompt = match cli.command {
+        Commands::Agent { prompt } => prompt,
+    };
+
     // 1. Initialize LLM Client
     let api_key = utils::load_api_key_from_env().expect("OPENROUTER_API_KEY not set");
     let or_client = OpenRouterClient::new()
@@ -37,9 +62,7 @@ When you have the final answer, provide it directly without using a tool."
         },
         Message {
             role: "user".to_string(),
-            content:
-                "List the files in the current directory, then show me the contents of Cargo.toml"
-                    .to_string(),
+            content: prompt,
             name: None,
             tool_calls: None,
             tool_call_id: None,
