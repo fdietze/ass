@@ -7,14 +7,11 @@ use openrouter_api::{
 };
 use std::time::Duration;
 
+mod config;
 mod shell;
 mod ui;
 use crate::shell::{ShellCommandArgs, execute_shell_command, shell_tool_schema};
 use crate::ui::pretty_print_message;
-
-// --- Constants ---
-const MODEL_NAME: &str = "google/gemini-2.5-flash-preview";
-// const MODEL_NAME: &str = "google/gemini-2.5-pro";
 
 /// A simple command-line agent
 #[derive(Parser, Debug)]
@@ -41,21 +38,21 @@ async fn main() -> Result<()> {
         Commands::Agent { prompt } => prompt,
     };
 
+    // 0. Load Configuration
+    let config = config::load_or_create()?;
+
     // 1. Initialize LLM Client
     let api_key = utils::load_api_key_from_env().expect("OPENROUTER_API_KEY not set");
     let or_client = OpenRouterClient::new()
         .with_base_url("https://openrouter.ai/api/v1/")?
-        .with_timeout(Duration::from_secs(120))
+        .with_timeout(Duration::from_secs(config.timeout_seconds))
         .with_api_key(api_key)?;
 
     // 2. Prepare the Conversation
     let mut messages: Vec<Message> = vec![
         Message {
             role: "system".to_string(),
-            content: "You are a helpful assistant that can execute shell commands.
-When asked to perform a task, use the available `execute_shell_command` tool.
-When you have the final answer, provide it directly without using a tool."
-                .to_string(),
+            content: config.system_prompt,
             name: None,
             tool_calls: None,
             tool_call_id: None,
@@ -76,10 +73,10 @@ When you have the final answer, provide it directly without using a tool."
         pretty_print_message(message);
     }
 
-    for _i in 0..5 {
+    for _i in 0..config.max_iterations {
         // Limit to 5 iterations to prevent runaway execution
         let request = ChatCompletionRequest {
-            model: MODEL_NAME.to_string(),
+            model: config.model.clone(),
             messages: messages.clone(),
             tools: Some(tools.clone()),
             stream: None,
