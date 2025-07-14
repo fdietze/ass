@@ -9,8 +9,9 @@ use std::time::Duration;
 
 mod config;
 mod shell;
+mod tool_executor;
 mod ui;
-use crate::shell::{ShellCommandArgs, execute_shell_command, shell_tool_schema};
+use crate::shell::shell_tool_schema;
 use crate::ui::pretty_print_message;
 
 /// A simple command-line agent
@@ -94,27 +95,11 @@ async fn main() -> Result<()> {
             messages.push(response_message.clone());
 
             // Check if the LLM wants to call a tool
-            if let Some(tool_calls) = response_message.tool_calls {
-                for tool_call in tool_calls {
-                    if tool_call.function_call.name == "execute_shell_command" {
-                        // Parse the arguments the LLM provided
-                        let args: ShellCommandArgs =
-                            serde_json::from_str(&tool_call.function_call.arguments)?;
-
-                        // Execute the command and get the result
-                        let tool_result = execute_shell_command(&args.command)?;
-
-                        // Add the tool's response to the message history
-                        let tool_message = Message {
-                            role: "tool".to_string(),
-                            content: tool_result,
-                            tool_call_id: Some(tool_call.id),
-                            name: None,
-                            tool_calls: None,
-                        };
-                        pretty_print_message(&tool_message);
-                        messages.push(tool_message);
-                    }
+            if response_message.tool_calls.is_some() {
+                let tool_messages = tool_executor::handle_tool_calls(&response_message);
+                for tool_message in tool_messages {
+                    pretty_print_message(&tool_message);
+                    messages.push(tool_message);
                 }
             } else {
                 // If no tool call, the LLM is giving its final answer
