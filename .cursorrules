@@ -1,0 +1,9 @@
+- automatically run `just check` to check (for compiling, linting and running tests) in-between and after implementation steps. To automatically fix some linter errors (clippy), run `just fix` (will internally run cargo clippy --fix).
+
+
+# Rust
+- Since rand 0.9 (keep this version):
+    - use rand::seq::IndexedRandom;
+    - rand::thread_rng() is deprecated, use rand::rng() instead.
+    - rng::gen_range() is deprecated, use rng.random_range() instead.
+- variables should be used directly in the `format!` string: format!("{my_variable}")
