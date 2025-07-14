@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.14.0/.schema/devbox.schema.json",
+  "packages": {
+    "rustup": "latest",
+    "just": "latest",
+    "cargo-udeps": "latest",
+  },
+  "shell": {
+    "init_hook": [
+      "projectDir=$PWD",
+      "rustupHomeDir=\"$projectDir\"/.rustup",
+      "mkdir -p $rustupHomeDir",
+      "export RUSTUP_HOME=$rustupHomeDir",
+      "export RUST_BACKTRACE=1",
+      "export LIBRARY_PATH=$LIBRARY_PATH:\"$projectDir/nix/profile/default/lib\"", // for rust ssl dependencies
+    ],
+  },
+}
+// this file supports comments
+// vim: set ft=jsonc:
