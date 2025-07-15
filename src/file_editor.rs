@@ -32,11 +32,11 @@ To delete content, provide an empty replacement_content string."
                     },
                     "start_line": {
                         "type": "integer",
-                        "description": "The 1-indexed starting line number of the range to be replaced."
+                        "description": "The 1-indexed, inclusive, starting line number of the range to be replaced."
                     },
                     "end_line": {
                         "type": "integer",
-                        "description": "The 1-indexed ending line number of the range to be replaced. To insert, set this to start_line - 1."
+                        "description": "The 1-indexed, inclusive, ending line number of the range to be replaced. To insert, set this to start_line - 1."
                     },
                     "replacement_content": {
                         "type": "string",

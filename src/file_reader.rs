@@ -31,11 +31,11 @@ The output will be prefixed with line numbers."
                     },
                     "start_line": {
                         "type": "integer",
-                        "description": "The 1-indexed starting line number. Defaults to the beginning of the file."
+                        "description": "The 1-indexed, inclusive, starting line number. Defaults to the beginning of the file."
                     },
                     "end_line": {
                         "type": "integer",
-                        "description": "The 1-indexed ending line number. Defaults to the end of the file."
+                        "description": "The 1-indexed, inclusive, ending line number. Defaults to the end of the file."
                     }
                 },
                 "required": ["file_path"]
