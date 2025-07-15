@@ -18,22 +18,18 @@ use crate::ui::pretty_print_message;
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = cli::Cli::parse();
+    let config = config::load_or_create()?;
 
     let prompt = match cli.command {
         cli::Commands::Agent { prompt } => prompt,
     };
 
-    // 0. Load Configuration
-    let config = config::load_or_create()?;
-
-    // 1. Initialize LLM Client
     let api_key = utils::load_api_key_from_env().expect("OPENROUTER_API_KEY not set");
     let or_client = OpenRouterClient::new()
         .with_base_url("https://openrouter.ai/api/v1/")?
         .with_timeout(Duration::from_secs(config.timeout_seconds))
         .with_api_key(api_key)?;
 
-    // 2. Prepare the Conversation
     let mut messages: Vec<Message> = vec![
         Message {
             role: "system".to_string(),
@@ -53,13 +49,11 @@ async fn main() -> Result<()> {
 
     let tools = vec![shell_tool_schema()];
 
-    // 3. Start the Interaction Loop
     for message in &messages {
         pretty_print_message(message);
     }
 
     for _i in 0..config.max_iterations {
-        // Limit to 5 iterations to prevent runaway execution
         let request = ChatCompletionRequest {
             model: config.model.clone(),
             messages: messages.clone(),
@@ -78,7 +72,6 @@ async fn main() -> Result<()> {
             pretty_print_message(&response_message);
             messages.push(response_message.clone());
 
-            // Check if the LLM wants to call a tool
             if response_message.tool_calls.is_some() {
                 let tool_messages = tool_executor::handle_tool_calls(&response_message);
                 for tool_message in tool_messages {
