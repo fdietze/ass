@@ -60,11 +60,20 @@ pub fn pretty_print_message(message: &Message) -> String {
     if let Some(tool_calls) = &message.tool_calls {
         writeln!(&mut buffer, "{}", "# tool calls:".dimmed()).unwrap();
         for tool_call in tool_calls {
-            let text = format!(
-                "# - Calling `{}`: {}",
-                tool_call.function_call.name, tool_call.function_call.arguments
-            );
-            writeln!(&mut buffer, "{}", text.dimmed()).unwrap();
+            let call_header = format!("# - Calling `{}`:", tool_call.function_call.name);
+            writeln!(&mut buffer, "{}", call_header.dimmed()).unwrap();
+
+            let args_str = &tool_call.function_call.arguments;
+
+            let formatted_args = match serde_json::from_str::<serde_json::Value>(args_str) {
+                Ok(json_value) => serde_json::to_string_pretty(&json_value)
+                    .unwrap_or_else(|_| args_str.to_string()),
+                Err(_) => args_str.to_string(),
+            };
+
+            for line in formatted_args.lines() {
+                writeln!(&mut buffer, "{}", format!("#   {line}").dimmed()).unwrap();
+            }
         }
     }
     buffer
