@@ -90,6 +90,7 @@ dependencies = [
  "clap",
  "colored",
  "fancy-regex",
+ "futures",
  "ignore",
  "once_cell",
  "openrouter_api",

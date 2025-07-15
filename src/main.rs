@@ -16,8 +16,10 @@ mod list_files;
 mod path_expander;
 mod prompt_builder;
 mod shell;
+mod streaming_executor;
 mod tool_executor;
 mod ui;
+
 use crate::prompt_builder::build_user_prompt;
 use crate::shell::shell_tool_schema;
 use crate::ui::pretty_print_message;
@@ -79,25 +81,19 @@ async fn main() -> Result<()> {
             transforms: None,
         };
 
-        let response = or_client.chat()?.chat_completion(request).await?;
+        let response_message =
+            streaming_executor::stream_and_collect_response(&or_client, request).await?;
 
-        if let Some(choice) = response.choices.first() {
-            let response_message = choice.message.clone();
-            print!("{}", pretty_print_message(&response_message));
-            messages.push(response_message.clone());
+        messages.push(response_message.clone());
 
-            if response_message.tool_calls.is_some() {
-                let tool_messages = tool_executor::handle_tool_calls(&response_message, &config);
-                for tool_message in tool_messages {
-                    print!("{}", pretty_print_message(&tool_message));
-                    messages.push(tool_message);
-                }
-            } else {
-                // If no tool call, the LLM is giving its final answer
-                break;
+        if response_message.tool_calls.is_some() {
+            let tool_messages = tool_executor::handle_tool_calls(&response_message, &config);
+            for tool_message in tool_messages {
+                print!("{}", pretty_print_message(&tool_message));
+                messages.push(tool_message);
             }
         } else {
-            println!("Error: No response from LLM.");
+            // If no tool call, the LLM is giving its final answer
             break;
         }
     }
