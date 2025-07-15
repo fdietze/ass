@@ -127,6 +127,14 @@ mod tests {
         let uncolored_summary_part_1 = format!("[{}", file1_path.display());
         let uncolored_summary_part_2 = "(3 lines)]";
 
+        // Assert that the original prompt appears *before* the file attachments header
+        let original_prompt_pos = output.find(&original_prompt).unwrap();
+        let attachments_header_pos = output.find("Attached file contents:").unwrap();
+        assert!(
+            original_prompt_pos < attachments_header_pos,
+            "The original prompt should appear before the 'Attached file contents' header."
+        );
+
         assert!(
             output.contains(&uncolored_summary_part_1),
             "Output should contain the file path for file 1.\nOutput was:\n---\n{output}\n---"
@@ -150,12 +158,6 @@ mod tests {
         assert!(
             output.contains(&original_prompt),
             "Output should still contain the original prompt text"
-        );
-
-        // Assert that the "Here is the content" header is still there, but collapsed
-        assert!(
-            output.contains("Attached file contents:"),
-            "Output should contain the intro text"
         );
     }
 }

@@ -40,9 +40,10 @@ pub async fn build_user_prompt(
     }
 
     let mut final_prompt = String::new();
+    final_prompt.push_str(original_prompt);
 
     if !content_parts.is_empty() {
-        final_prompt.push_str("Attached file contents:\n");
+        final_prompt.push_str("\n\nAttached file contents:\n");
         for (path, content) in content_parts {
             final_prompt.push_str(&format!("### `{path}`\n"));
             final_prompt.push_str("```\n");
@@ -53,13 +54,10 @@ pub async fn build_user_prompt(
 
     if !expansion_result.not_found.is_empty() {
         final_prompt.push_str(&format!(
-            "Note: The following files were mentioned but could not be found and are not included: {}\n",
+            "\nNote: The following files were mentioned but could not be found and are not included: {}\n",
             expansion_result.not_found.join(", ")
         ));
     }
-
-    final_prompt.push('\n');
-    final_prompt.push_str(original_prompt);
 
     Ok(final_prompt)
 }
