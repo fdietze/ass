@@ -30,6 +30,10 @@ To delete content, provide an empty replacement_content string."
                         "type": "string",
                         "description": "The relative path to the file to be edited."
                     },
+                    "replacement_content": {
+                        "type": "string",
+                        "description": "The new content to write to the file. To delete, this should be an empty string."
+                    },
                     "start_line": {
                         "type": "integer",
                         "description": "The 1-indexed, inclusive, starting line number of the range to be replaced."
@@ -38,10 +42,6 @@ To delete content, provide an empty replacement_content string."
                         "type": "integer",
                         "description": "The 1-indexed, inclusive, ending line number of the range to be replaced. To insert, set this to start_line - 1."
                     },
-                    "replacement_content": {
-                        "type": "string",
-                        "description": "The new content to write to the file. To delete, this should be an empty string."
-                    }
                 },
                 "required": ["file_path", "start_line", "end_line", "replacement_content"]
             }),
