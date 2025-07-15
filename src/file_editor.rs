@@ -53,7 +53,7 @@ To delete content, provide an empty replacement_content string."
 ///
 /// This function canonicalizes both the file path and the allowed directory paths
 /// to prevent directory traversal attacks and ensure a correct comparison.
-fn is_path_editable(path_to_edit: &Path, editable_paths: &[String]) -> Result<()> {
+pub fn is_path_editable(path_to_edit: &Path, editable_paths: &[String]) -> Result<()> {
     let canonical_path_to_edit = path_to_edit.canonicalize()?;
 
     let is_allowed = editable_paths.iter().any(|p| {

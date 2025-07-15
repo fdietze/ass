@@ -1,6 +1,7 @@
 use crate::{
     config::Config,
     file_editor::{FileEditArgs, execute_file_edit},
+    file_reader::{FileReadArgs, execute_read_file},
     shell::{ShellCommandArgs, execute_shell_command},
 };
 use openrouter_api::types::chat::Message;
@@ -63,6 +64,35 @@ pub fn handle_tool_calls(response_message: &Message, config: &Config) -> Vec<Mes
                             Err(e) => Message {
                                 role: "tool".to_string(),
                                 content: format!("Error executing file edit: {e}"),
+                                tool_call_id,
+                                name: None,
+                                tool_calls: None,
+                            },
+                        },
+                        Err(e) => Message {
+                            role: "tool".to_string(),
+                            content: format!(
+                                "Error: Invalid arguments provided for {function_name}: {e}"
+                            ),
+                            tool_call_id,
+                            name: None,
+                            tool_calls: None,
+                        },
+                    }
+                }
+                "read_file" => {
+                    match serde_json::from_str::<FileReadArgs>(&tool_call.function_call.arguments) {
+                        Ok(args) => match execute_read_file(&args, config) {
+                            Ok(output) => Message {
+                                role: "tool".to_string(),
+                                content: output,
+                                tool_call_id,
+                                name: None,
+                                tool_calls: None,
+                            },
+                            Err(e) => Message {
+                                role: "tool".to_string(),
+                                content: format!("Error reading file: {e}"),
                                 tool_call_id,
                                 name: None,
                                 tool_calls: None,

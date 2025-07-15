@@ -13,6 +13,7 @@ pub struct Config {
     pub system_prompt: String,
     pub timeout_seconds: u64,
     pub max_iterations: u8,
+    pub max_read_lines: u64,
     pub allowed_command_prefixes: Vec<String>,
     pub ignored_paths: Vec<String>,
     pub editable_paths: Vec<String>,
@@ -25,6 +26,7 @@ impl Default for Config {
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
             timeout_seconds: 120,
             max_iterations: 5,
+            max_read_lines: 1000,
             allowed_command_prefixes: vec![
                 "ls".to_string(),
                 "cat".to_string(),
@@ -79,6 +81,11 @@ pub fn load_or_create() -> Result<Config> {
             default_config.max_iterations
         } else {
             config.max_iterations
+        },
+        max_read_lines: if config.max_read_lines == 0 {
+            default_config.max_read_lines
+        } else {
+            config.max_read_lines
         },
         allowed_command_prefixes: if config.allowed_command_prefixes.is_empty() {
             default_config.allowed_command_prefixes
