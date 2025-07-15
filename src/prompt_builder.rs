@@ -42,7 +42,7 @@ pub async fn build_user_prompt(original_prompt: &str) -> Result<String> {
         for (path, content) in content_parts {
             final_prompt.push_str(&format!("### `{path}`\n"));
             final_prompt.push_str("```\n");
-            final_prompt.push_str(&content);
+            final_prompt.push_str(&format_with_line_numbers(&content));
             final_prompt.push_str("\n```\n---\n");
         }
     }
@@ -57,4 +57,22 @@ pub async fn build_user_prompt(original_prompt: &str) -> Result<String> {
     final_prompt.push_str(original_prompt);
 
     Ok(final_prompt)
+}
+
+fn format_with_line_numbers(content: &str) -> String {
+    let line_count = content.lines().count();
+    if line_count == 0 {
+        return String::new();
+    }
+    let max_line_number_width = line_count.to_string().len();
+
+    content
+        .lines()
+        .enumerate()
+        .map(|(i, line)| {
+            let line_number = i + 1;
+            format!("{line_number: >max_line_number_width$} | {line}")
+        })
+        .collect::<Vec<String>>()
+        .join("\n")
 }
