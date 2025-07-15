@@ -1,5 +1,6 @@
 use crate::{
     config::Config,
+    file_editor::{FileEditArgs, execute_file_edit},
     shell::{ShellCommandArgs, execute_shell_command},
 };
 use openrouter_api::types::chat::Message;
@@ -17,10 +18,41 @@ pub fn handle_tool_calls(response_message: &Message, config: &Config) -> Vec<Mes
                     match serde_json::from_str::<ShellCommandArgs>(
                         &tool_call.function_call.arguments,
                     ) {
-                        Ok(args) => match execute_shell_command(
-                            &args.command,
-                            &config.allowed_command_prefixes,
-                        ) {
+                        Ok(args) => {
+                            match execute_shell_command(
+                                &args.command,
+                                &config.allowed_command_prefixes,
+                            ) {
+                                Ok(output) => Message {
+                                    role: "tool".to_string(),
+                                    content: output,
+                                    tool_call_id,
+                                    name: None,
+                                    tool_calls: None,
+                                },
+                                Err(e) => Message {
+                                    role: "tool".to_string(),
+                                    content: format!("Error executing command: {e}"),
+                                    tool_call_id,
+                                    name: None,
+                                    tool_calls: None,
+                                },
+                            }
+                        }
+                        Err(e) => Message {
+                            role: "tool".to_string(),
+                            content: format!(
+                                "Error: Invalid arguments provided for {function_name}: {e}"
+                            ),
+                            tool_call_id,
+                            name: None,
+                            tool_calls: None,
+                        },
+                    }
+                }
+                "edit_file" => {
+                    match serde_json::from_str::<FileEditArgs>(&tool_call.function_call.arguments) {
+                        Ok(args) => match execute_file_edit(&args, &config.editable_paths) {
                             Ok(output) => Message {
                                 role: "tool".to_string(),
                                 content: output,
@@ -30,7 +62,7 @@ pub fn handle_tool_calls(response_message: &Message, config: &Config) -> Vec<Mes
                             },
                             Err(e) => Message {
                                 role: "tool".to_string(),
-                                content: format!("Error executing command: {e}"),
+                                content: format!("Error executing file edit: {e}"),
                                 tool_call_id,
                                 name: None,
                                 tool_calls: None,

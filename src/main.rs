@@ -10,6 +10,7 @@ use std::time::Duration;
 mod cli;
 mod config;
 mod enricher;
+mod file_editor;
 mod path_expander;
 mod prompt_builder;
 mod shell;
@@ -53,7 +54,7 @@ async fn main() -> Result<()> {
         },
     ];
 
-    let tools = vec![shell_tool_schema()];
+    let tools = vec![shell_tool_schema(), file_editor::file_edit_tool_schema()];
 
     for message in &messages {
         print!("{}", pretty_print_message(message));

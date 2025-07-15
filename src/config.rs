@@ -15,6 +15,7 @@ pub struct Config {
     pub max_iterations: u8,
     pub allowed_command_prefixes: Vec<String>,
     pub ignored_paths: Vec<String>,
+    pub editable_paths: Vec<String>,
 }
 
 impl Default for Config {
@@ -31,6 +32,7 @@ impl Default for Config {
                 "pwd".to_string(),
             ],
             ignored_paths: vec![".git".to_string()],
+            editable_paths: vec![".".to_string()],
         }
     }
 }
@@ -87,6 +89,11 @@ pub fn load_or_create() -> Result<Config> {
             default_config.ignored_paths
         } else {
             config.ignored_paths
+        },
+        editable_paths: if config.editable_paths.is_empty() {
+            default_config.editable_paths
+        } else {
+            config.editable_paths
         },
     };
 
