@@ -2,6 +2,7 @@ use crate::{
     config::Config,
     file_editor::{FileEditArgs, execute_file_edit},
     file_reader::{FileReadArgs, execute_read_file},
+    list_files::{ListFilesArgs, execute_list_files},
     shell::{ShellCommandArgs, execute_shell_command},
 };
 use openrouter_api::types::chat::Message;
@@ -93,6 +94,36 @@ pub fn handle_tool_calls(response_message: &Message, config: &Config) -> Vec<Mes
                             Err(e) => Message {
                                 role: "tool".to_string(),
                                 content: format!("Error reading file: {e}"),
+                                tool_call_id,
+                                name: None,
+                                tool_calls: None,
+                            },
+                        },
+                        Err(e) => Message {
+                            role: "tool".to_string(),
+                            content: format!(
+                                "Error: Invalid arguments provided for {function_name}: {e}"
+                            ),
+                            tool_call_id,
+                            name: None,
+                            tool_calls: None,
+                        },
+                    }
+                }
+                "list_files" => {
+                    match serde_json::from_str::<ListFilesArgs>(&tool_call.function_call.arguments)
+                    {
+                        Ok(args) => match execute_list_files(&args, config) {
+                            Ok(output) => Message {
+                                role: "tool".to_string(),
+                                content: output,
+                                tool_call_id,
+                                name: None,
+                                tool_calls: None,
+                            },
+                            Err(e) => Message {
+                                role: "tool".to_string(),
+                                content: format!("Error listing files: {e}"),
                                 tool_call_id,
                                 name: None,
                                 tool_calls: None,

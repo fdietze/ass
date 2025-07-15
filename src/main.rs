@@ -12,6 +12,7 @@ mod config;
 mod enricher;
 mod file_editor;
 mod file_reader;
+mod list_files;
 mod path_expander;
 mod prompt_builder;
 mod shell;
@@ -59,6 +60,7 @@ async fn main() -> Result<()> {
         shell_tool_schema(),
         file_editor::file_edit_tool_schema(),
         file_reader::read_file_tool_schema(),
+        list_files::list_files_tool_schema(),
     ];
 
     for message in &messages {

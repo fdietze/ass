@@ -1,7 +1,8 @@
 use ignore::WalkBuilder;
-use ignore::overrides::OverrideBuilder;
 use std::collections::BTreeSet;
+use std::io::Write;
 use std::path::Path;
+use tempfile::NamedTempFile;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ExpansionResult {
@@ -13,23 +14,29 @@ pub fn expand_and_validate(paths: &[String], ignored_paths: &[String]) -> Expans
     let mut files = BTreeSet::new();
     let mut not_found = Vec::new();
 
-    let mut override_builder = OverrideBuilder::new(std::env::current_dir().unwrap());
-    for pattern in ignored_paths {
-        // We add a `!` prefix to make it an ignore pattern.
-        let ignore_pattern = format!("!{pattern}");
-        override_builder.add(&ignore_pattern).unwrap();
-    }
-    let overrides = override_builder.build().unwrap();
+    // Create a temporary ignore file to hold our custom ignore patterns.
+    // This is more robust than using OverrideBuilder, which has "match-or-ignore" semantics.
+    let temp_ignore_file: Option<NamedTempFile> = if !ignored_paths.is_empty() {
+        let mut file = NamedTempFile::new().unwrap();
+        let ignore_content = ignored_paths.join("\n");
+        writeln!(file, "{ignore_content}").unwrap();
+        Some(file)
+    } else {
+        None
+    };
 
     for path_str in paths {
         let path = Path::new(path_str);
         if path.exists() {
-            for entry in WalkBuilder::new(path)
-                .hidden(false)
-                .overrides(overrides.clone())
-                .build()
-                .flatten()
-            {
+            let mut walk_builder = WalkBuilder::new(path);
+            walk_builder.hidden(false);
+
+            // If we created a temp ignore file, add it to the walker.
+            if let Some(ref file) = temp_ignore_file {
+                walk_builder.add_ignore(file.path());
+            }
+
+            for entry in walk_builder.build().flatten() {
                 if entry.file_type().is_some_and(|ft| ft.is_file()) {
                     files.insert(entry.path().to_string_lossy().into_owned());
                 }
