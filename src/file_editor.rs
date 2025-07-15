@@ -20,7 +20,7 @@ pub fn file_edit_tool_schema() -> Tool {
             description: Some(
                 "Edits a file by replacing a range of lines.
 To insert content, set end_line to be start_line - 1.
-To delete content, provide an empty replacement_content string."
+To delete content, provide an empty replacement_content string. Provide the keys in order: file_path, replacement_content, start_line, end_line."
                     .to_string(),
             ),
             parameters: serde_json::json!({
@@ -32,7 +32,7 @@ To delete content, provide an empty replacement_content string."
                     },
                     "replacement_content": {
                         "type": "string",
-                        "description": "The new content to write to the file. To delete, this should be an empty string."
+                        "description": "The new raw content to write to the file. To delete, this should be an empty string. Don't use code fences."
                     },
                     "start_line": {
                         "type": "integer",
@@ -90,6 +90,7 @@ fn apply_edit(
     }
 
     let original_content = fs::read_to_string(path_to_edit)?;
+    let had_trailing_newline = original_content.ends_with('\n');
     let lines: Vec<&str> = original_content.lines().collect();
     let line_count = lines.len();
 
@@ -147,7 +148,10 @@ fn apply_edit(
     }
 
     // --- Diff and File Writing ---
-    let new_content = new_lines.join("\n");
+    let mut new_content = new_lines.join("\n");
+    if had_trailing_newline && (!new_content.is_empty() || !new_lines.is_empty()) {
+        new_content.push('\n');
+    }
 
     let diff = TextDiff::from_lines(&original_content, &new_content)
         .unified_diff()
@@ -303,6 +307,24 @@ mod tests {
                     .to_string()
                     .contains("start_line (3) is out of bounds")
             );
+        }
+
+        #[test]
+        fn test_preserves_trailing_newline() {
+            let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2\n");
+            let path = Path::new(&file_path);
+            apply_edit(path, 1, 1, "new line 1").unwrap();
+            let content = fs::read_to_string(path).unwrap();
+            assert_eq!(content, "new line 1\nline 2\n");
+        }
+
+        #[test]
+        fn test_does_not_add_trailing_newline() {
+            let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2");
+            let path = Path::new(&file_path);
+            apply_edit(path, 1, 1, "new line 1").unwrap();
+            let content = fs::read_to_string(path).unwrap();
+            assert_eq!(content, "new line 1\nline 2");
         }
     }
 
