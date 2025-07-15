@@ -1,4 +1,5 @@
 use anyhow::Result;
+use colored::Colorize;
 use futures::StreamExt;
 use openrouter_api::{OpenRouterClient, Ready, models::tool::ToolCall, types::chat::*};
 use std::io::{Write, stdout};
@@ -12,12 +13,18 @@ pub async fn stream_and_collect_response(
 
     let mut content = String::new();
     let mut tool_calls: Vec<ToolCall> = Vec::new();
+    let mut header_printed = false;
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
         let choice = chunk.choices.first();
 
         if let Some(c) = choice.and_then(|c| c.delta.content.as_deref()) {
+            if !header_printed {
+                print!("\n[{}]\n", "assistant".blue());
+                stdout().flush()?;
+                header_printed = true;
+            }
             print!("{c}");
             stdout().flush()?;
             content.push_str(c);
@@ -29,7 +36,9 @@ pub async fn stream_and_collect_response(
         }
     }
 
-    println!();
+    if header_printed {
+        println!();
+    }
 
     Ok(Message {
         role: "assistant".to_string(),

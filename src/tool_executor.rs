@@ -5,6 +5,7 @@ use crate::{
     list_files::{ListFilesArgs, execute_list_files},
     shell::{ShellCommandArgs, execute_shell_command},
 };
+use colored::Colorize;
 use openrouter_api::types::chat::Message;
 
 pub fn handle_tool_calls(response_message: &Message, config: &Config) -> Vec<Message> {
@@ -14,130 +15,97 @@ pub fn handle_tool_calls(response_message: &Message, config: &Config) -> Vec<Mes
         for tool_call in tool_calls {
             let tool_call_id = Some(tool_call.id.clone());
             let function_name = &tool_call.function_call.name;
+            println!(
+                "\n[{}]",
+                format!("{}: {}", "tool".purple(), function_name).purple()
+            );
 
             let tool_message = match function_name.as_str() {
                 "execute_shell_command" => {
-                    match serde_json::from_str::<ShellCommandArgs>(
+                    let content = match serde_json::from_str::<ShellCommandArgs>(
                         &tool_call.function_call.arguments,
                     ) {
-                        Ok(args) => {
-                            match execute_shell_command(
-                                &args.command,
-                                &config.allowed_command_prefixes,
-                            ) {
-                                Ok(output) => Message {
-                                    role: "tool".to_string(),
-                                    content: output,
-                                    tool_call_id,
-                                    name: None,
-                                    tool_calls: None,
-                                },
-                                Err(e) => Message {
-                                    role: "tool".to_string(),
-                                    content: format!("Error executing command: {e}"),
-                                    tool_call_id,
-                                    name: None,
-                                    tool_calls: None,
-                                },
-                            }
-                        }
-                        Err(e) => Message {
-                            role: "tool".to_string(),
-                            content: format!(
-                                "Error: Invalid arguments provided for {function_name}: {e}"
-                            ),
-                            tool_call_id,
-                            name: None,
-                            tool_calls: None,
+                        Ok(args) => match execute_shell_command(
+                            &args.command,
+                            &config.allowed_command_prefixes,
+                        ) {
+                            Ok(output) => output,
+                            Err(e) => format!("Error executing command: {e}"),
                         },
+                        Err(e) => {
+                            format!("Error: Invalid arguments provided for {function_name}: {e}")
+                        }
+                    };
+                    println!("{}", content);
+                    Message {
+                        role: "tool".to_string(),
+                        content,
+                        tool_call_id,
+                        name: None,
+                        tool_calls: None,
                     }
                 }
                 "edit_file" => {
-                    match serde_json::from_str::<FileEditArgs>(&tool_call.function_call.arguments) {
+                    let content = match serde_json::from_str::<FileEditArgs>(
+                        &tool_call.function_call.arguments,
+                    ) {
                         Ok(args) => match execute_file_edit(&args, &config.editable_paths) {
-                            Ok(output) => Message {
-                                role: "tool".to_string(),
-                                content: output,
-                                tool_call_id,
-                                name: None,
-                                tool_calls: None,
-                            },
-                            Err(e) => Message {
-                                role: "tool".to_string(),
-                                content: format!("Error executing file edit: {e}"),
-                                tool_call_id,
-                                name: None,
-                                tool_calls: None,
-                            },
+                            Ok(output) => output,
+                            Err(e) => format!("Error executing file edit: {e}"),
                         },
-                        Err(e) => Message {
-                            role: "tool".to_string(),
-                            content: format!(
-                                "Error: Invalid arguments provided for {function_name}: {e}"
-                            ),
-                            tool_call_id,
-                            name: None,
-                            tool_calls: None,
-                        },
+                        Err(e) => {
+                            format!("Error: Invalid arguments provided for {function_name}: {e}")
+                        }
+                    };
+                    println!("{}", content);
+                    Message {
+                        role: "tool".to_string(),
+                        content,
+                        tool_call_id,
+                        name: None,
+                        tool_calls: None,
                     }
                 }
                 "read_file" => {
-                    match serde_json::from_str::<FileReadArgs>(&tool_call.function_call.arguments) {
+                    let content = match serde_json::from_str::<FileReadArgs>(
+                        &tool_call.function_call.arguments,
+                    ) {
                         Ok(args) => match execute_read_file(&args, config) {
-                            Ok(output) => Message {
-                                role: "tool".to_string(),
-                                content: output,
-                                tool_call_id,
-                                name: None,
-                                tool_calls: None,
-                            },
-                            Err(e) => Message {
-                                role: "tool".to_string(),
-                                content: format!("Error reading file: {e}"),
-                                tool_call_id,
-                                name: None,
-                                tool_calls: None,
-                            },
+                            Ok(output) => output,
+                            Err(e) => format!("Error reading file: {e}"),
                         },
-                        Err(e) => Message {
-                            role: "tool".to_string(),
-                            content: format!(
-                                "Error: Invalid arguments provided for {function_name}: {e}"
-                            ),
-                            tool_call_id,
-                            name: None,
-                            tool_calls: None,
-                        },
+                        Err(e) => {
+                            format!("Error: Invalid arguments provided for {function_name}: {e}")
+                        }
+                    };
+                    println!("{}", content);
+                    Message {
+                        role: "tool".to_string(),
+                        content,
+                        tool_call_id,
+                        name: None,
+                        tool_calls: None,
                     }
                 }
                 "list_files" => {
-                    match serde_json::from_str::<ListFilesArgs>(&tool_call.function_call.arguments)
-                    {
+                    let content = match serde_json::from_str::<ListFilesArgs>(
+                        &tool_call.function_call.arguments,
+                    ) {
                         Ok(args) => match execute_list_files(&args, config) {
-                            Ok(output) => Message {
-                                role: "tool".to_string(),
-                                content: output,
-                                tool_call_id,
-                                name: None,
-                                tool_calls: None,
-                            },
-                            Err(e) => Message {
-                                role: "tool".to_string(),
-                                content: format!("Error listing files: {e}"),
-                                tool_call_id,
-                                name: None,
-                                tool_calls: None,
-                            },
+                            Ok(output) => output,
+                            Err(e) => format!("Error listing files: {e}"),
                         },
-                        Err(e) => Message {
-                            role: "tool".to_string(),
-                            content: format!(
-                                "Error: Invalid arguments provided for {function_name}: {e}"
-                            ),
-                            tool_call_id,
-                            name: None,
-                            tool_calls: None,
-                        },
+                        Err(e) => {
+                            format!("Error: Invalid arguments provided for {function_name}: {e}")
+                        }
+                    };
+                    println!("{}", content);
+                    Message {
+                        role: "tool".to_string(),
+                        content,
+                        tool_call_id,
+                        name: None,
+                        tool_calls: None,
                     }
                 }
                 _ => Message {

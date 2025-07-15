@@ -20,7 +20,7 @@ pub fn file_edit_tool_schema() -> Tool {
             description: Some(
                 "Edits a file by replacing a range of lines.
 To insert content, set end_line to be start_line - 1.
-To delete content, provide an empty replacement_content string. Provide the keys in order: file_path, replacement_content, start_line, end_line."
+To delete content, provide an empty replacement_content string. Provide the keys in order: file_path, start_line, end_line, replacement_content. Take special care to provide the right escaping for the replacement_content string."
                     .to_string(),
             ),
             parameters: serde_json::json!({
@@ -171,12 +171,14 @@ pub fn execute_file_edit(args: &FileEditArgs, editable_paths: &[String]) -> Resu
 
     is_path_editable(path_to_edit, editable_paths)?;
 
-    apply_edit(
+    let diff = apply_edit(
         path_to_edit,
         args.start_line,
         args.end_line,
         &args.replacement_content,
-    )
+    )?;
+
+    Ok(format!("Edit successful with diff:\n{diff}"))
 }
 
 #[cfg(test)]

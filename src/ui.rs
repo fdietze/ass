@@ -1,6 +1,7 @@
 use colored::Colorize;
 use fancy_regex::Regex;
 use once_cell::sync::Lazy;
+use openrouter_api::models::tool::ToolCall;
 use openrouter_api::types::chat::Message;
 use std::fmt::Write;
 
@@ -15,10 +16,17 @@ static FILE_BLOCK_REGEX: Lazy<Regex> = Lazy::new(|| {
 pub fn pretty_print_message(message: &Message) -> String {
     let mut buffer = String::new();
 
-    let role_text = message.role.to_string();
-    let role_colored = match role_text.as_str() {
-        "tool" => role_text.purple(),
-        _ => role_text.blue(),
+    let role_text = message.role.as_str();
+    let role_colored = match role_text {
+        "tool" => {
+            println!("!!! DEBUG: message: {:?}", message);
+            let mut display = message.role.to_string();
+            if let Some(tool_calls) = &message.tool_calls {
+                write!(&mut display, " ({})", format_tool_calls_pretty(tool_calls)).unwrap();
+            }
+            display.red()
+        }
+        _ => message.role.to_string().blue(),
     };
     writeln!(&mut buffer, "\n[{role_colored}]").unwrap();
 
@@ -40,56 +48,49 @@ pub fn pretty_print_message(message: &Message) -> String {
                 .to_string();
         }
 
-        if role_text == "tool" {
-            if let Some(formatted_diff) = format_diff(&message.content) {
-                writeln!(&mut buffer, "{formatted_diff}").unwrap();
-            } else {
-                // Not a diff, print normally
+        match role_text {
+            "user" => {
                 for line in processed_content.lines() {
-                    if line.starts_with('#') {
-                        writeln!(&mut buffer, "{}", line.dimmed()).unwrap();
-                    } else {
-                        writeln!(&mut buffer, "{line}").unwrap();
-                    }
-                }
-            }
-        } else {
-            // Not a tool message, print normally
-            for line in processed_content.lines() {
-                if line.starts_with('#') {
-                    writeln!(&mut buffer, "{}", line.dimmed()).unwrap();
-                } else if is_user {
                     // Pre-colored lines (our summaries) will not be re-colored.
                     // Other user prompt lines will be cyan.
+                    // \x1B is the escape character for ANSI color codes.
                     if line.starts_with('\x1B') {
                         writeln!(&mut buffer, "{line}").unwrap();
                     } else {
                         writeln!(&mut buffer, "{}", line.cyan()).unwrap();
                     }
-                } else {
+                }
+            }
+            _ => {
+                // Assistant and other roles
+                for line in processed_content.lines() {
                     writeln!(&mut buffer, "{line}").unwrap();
                 }
             }
         }
     }
+    buffer
+}
 
-    if let Some(tool_calls) = &message.tool_calls {
-        writeln!(&mut buffer, "{}", "# tool calls:".dimmed()).unwrap();
-        for tool_call in tool_calls {
-            let call_header = format!("# - Calling `{}`:", tool_call.function_call.name);
-            writeln!(&mut buffer, "{}", call_header.dimmed()).unwrap();
+/// Formats a vec of tool calls into a string with nice formatting.
+pub fn format_tool_calls_pretty(tool_calls: &[ToolCall]) -> String {
+    let mut buffer = String::new();
+    writeln!(&mut buffer, "# tool calls:").unwrap();
+    for tool_call in tool_calls {
+        let call_header = format!("# - Calling `{}`:", tool_call.function_call.name);
+        writeln!(&mut buffer, "{call_header}").unwrap();
 
-            let args_str = &tool_call.function_call.arguments;
+        let args_str = &tool_call.function_call.arguments;
 
-            let formatted_args = match serde_json::from_str::<serde_json::Value>(args_str) {
-                Ok(json_value) => serde_json::to_string_pretty(&json_value)
-                    .unwrap_or_else(|_| args_str.to_string()),
-                Err(_) => args_str.to_string(),
-            };
-
-            for line in formatted_args.lines() {
-                writeln!(&mut buffer, "{}", format!("#   {line}").dimmed()).unwrap();
+        let formatted_args = match serde_json::from_str::<serde_json::Value>(args_str) {
+            Ok(json_value) => {
+                serde_json::to_string_pretty(&json_value).unwrap_or_else(|_| args_str.to_string())
             }
+            Err(_) => args_str.to_string(),
+        };
+
+        for line in formatted_args.lines() {
+            writeln!(&mut buffer, "#   {line}").unwrap();
         }
     }
     buffer
@@ -97,7 +98,7 @@ pub fn pretty_print_message(message: &Message) -> String {
 
 /// Checks if a string looks like a unified diff and formats it with colors.
 /// Returns `None` if the content is not a diff.
-fn format_diff(content: &str) -> Option<String> {
+pub fn format_diff(content: &str) -> Option<String> {
     let mut lines = content.lines();
     if !matches!((lines.next(), lines.next()), (Some(f), Some(s)) if f.starts_with("---") && s.starts_with("+++"))
     {

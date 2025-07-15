@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
         list_files::list_files_tool_schema(),
     ];
 
-    println!("Model: {}\n", config.model);
+    println!("Model: {}", config.model);
     for message in &messages {
         print!("{}", pretty_print_message(message));
     }
@@ -90,7 +90,6 @@ async fn main() -> Result<()> {
         if response_message.tool_calls.is_some() {
             let tool_messages = tool_executor::handle_tool_calls(&response_message, &config);
             for tool_message in tool_messages {
-                print!("{}", pretty_print_message(&tool_message));
                 messages.push(tool_message);
             }
         } else {

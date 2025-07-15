@@ -105,7 +105,13 @@ pub fn execute_read_file(args: &FileReadArgs, config: &Config) -> Result<String>
         output.push_str("\n... (file content truncated)");
     }
 
-    Ok(output)
+    Ok(format!(
+        "[{path_to_read}:{start_line}-{end_line}]\n{output}",
+        path_to_read = path_to_read.display(),
+        start_line = start_line,
+        end_line = end_line,
+        output = output,
+    ))
 }
 
 #[cfg(test)]

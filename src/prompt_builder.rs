@@ -43,7 +43,10 @@ pub async fn build_user_prompt(
     final_prompt.push_str(original_prompt);
 
     if !content_parts.is_empty() {
-        final_prompt.push_str("\n\nAttached file contents:\n");
+        final_prompt.push_str(&format!(
+            "\n\n{}\n",
+            "Attached file contents:".dimmed()
+        ));
         for (path, content) in content_parts {
             final_prompt.push_str(&format!("### `{path}`\n"));
             final_prompt.push_str("```\n");
