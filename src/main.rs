@@ -7,6 +7,7 @@ use openrouter_api::{
 };
 use std::time::Duration;
 
+mod cli;
 mod config;
 mod shell;
 mod tool_executor;
@@ -14,29 +15,12 @@ mod ui;
 use crate::shell::shell_tool_schema;
 use crate::ui::pretty_print_message;
 
-/// A simple command-line agent
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Parser, Debug)]
-enum Commands {
-    /// Run the agent with a prompt
-    Agent {
-        /// The prompt for the agent
-        prompt: String,
-    },
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = cli::Cli::parse();
 
     let prompt = match cli.command {
-        Commands::Agent { prompt } => prompt,
+        cli::Commands::Agent { prompt } => prompt,
     };
 
     // 0. Load Configuration
