@@ -40,19 +40,35 @@ pub fn pretty_print_message(message: &Message) -> String {
                 .to_string();
         }
 
-        for line in processed_content.lines() {
-            if line.starts_with('#') {
-                writeln!(&mut buffer, "{}", line.dimmed()).unwrap();
-            } else if is_user {
-                // Pre-colored lines (our summaries) will not be re-colored.
-                // Other user prompt lines will be cyan.
-                if line.starts_with('\x1B') {
-                    writeln!(&mut buffer, "{line}").unwrap();
-                } else {
-                    writeln!(&mut buffer, "{}", line.cyan()).unwrap();
-                }
+        if role_text == "tool" {
+            if let Some(formatted_diff) = format_diff(&message.content) {
+                writeln!(&mut buffer, "{formatted_diff}").unwrap();
             } else {
-                writeln!(&mut buffer, "{line}").unwrap();
+                // Not a diff, print normally
+                for line in processed_content.lines() {
+                    if line.starts_with('#') {
+                        writeln!(&mut buffer, "{}", line.dimmed()).unwrap();
+                    } else {
+                        writeln!(&mut buffer, "{line}").unwrap();
+                    }
+                }
+            }
+        } else {
+            // Not a tool message, print normally
+            for line in processed_content.lines() {
+                if line.starts_with('#') {
+                    writeln!(&mut buffer, "{}", line.dimmed()).unwrap();
+                } else if is_user {
+                    // Pre-colored lines (our summaries) will not be re-colored.
+                    // Other user prompt lines will be cyan.
+                    if line.starts_with('\x1B') {
+                        writeln!(&mut buffer, "{line}").unwrap();
+                    } else {
+                        writeln!(&mut buffer, "{}", line.cyan()).unwrap();
+                    }
+                } else {
+                    writeln!(&mut buffer, "{line}").unwrap();
+                }
             }
         }
     }
@@ -79,12 +95,67 @@ pub fn pretty_print_message(message: &Message) -> String {
     buffer
 }
 
+/// Checks if a string looks like a unified diff and formats it with colors.
+/// Returns `None` if the content is not a diff.
+fn format_diff(content: &str) -> Option<String> {
+    let mut lines = content.lines();
+    if !matches!((lines.next(), lines.next()), (Some(f), Some(s)) if f.starts_with("---") && s.starts_with("+++"))
+    {
+        return None;
+    }
+
+    let colored_lines: Vec<String> = content
+        .lines()
+        .map(|line| {
+            if line.starts_with("---") || line.starts_with('-') {
+                line.red().to_string()
+            } else if line.starts_with("+++") || line.starts_with('+') {
+                line.green().to_string()
+            } else if line.starts_with("@@") {
+                line.cyan().to_string()
+            } else {
+                line.dimmed().to_string()
+            }
+        })
+        .collect();
+
+    Some(colored_lines.join("\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{config::Config, prompt_builder::build_user_prompt};
     use std::fs;
     use tempfile::Builder;
+
+    #[test]
+    fn test_format_diff_valid() {
+        let diff_content = "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-red\n+green\nunchanged";
+        colored::control::set_override(true);
+        let colored = format_diff(diff_content).unwrap();
+
+        assert!(colored.contains(&"--- a/file.txt".red().to_string()));
+        assert!(colored.contains(&"+++ b/file.txt".green().to_string()));
+        assert!(colored.contains(&"-red".red().to_string()));
+        assert!(colored.contains(&"+green".green().to_string()));
+        assert!(colored.contains(&"@@ -1 +1 @@".cyan().to_string()));
+        assert!(colored.contains(&"unchanged".dimmed().to_string()));
+
+        colored::control::set_override(false);
+    }
+
+    #[test]
+    fn test_format_diff_invalid() {
+        let not_diff_content = "just some regular text\n- with a minus\n+ and a plus";
+        assert!(format_diff(not_diff_content).is_none());
+
+        let empty_content = "";
+        assert!(format_diff(empty_content).is_none());
+
+        let one_line = "--- a/file.txt";
+        assert!(format_diff(one_line).is_none());
+    }
 
     #[tokio::test]
     async fn test_build_and_collapse_prompt() {
