@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
     let mut messages: Vec<Message> = vec![
         Message {
             role: "system".to_string(),
-            content: config.system_prompt,
+            content: config.system_prompt.clone(),
             name: None,
             tool_calls: None,
             tool_call_id: None,
@@ -79,7 +79,7 @@ async fn main() -> Result<()> {
             messages.push(response_message.clone());
 
             if response_message.tool_calls.is_some() {
-                let tool_messages = tool_executor::handle_tool_calls(&response_message);
+                let tool_messages = tool_executor::handle_tool_calls(&response_message, &config);
                 for tool_message in tool_messages {
                     pretty_print_message(&tool_message);
                     messages.push(tool_message);

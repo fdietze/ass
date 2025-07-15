@@ -1,7 +1,10 @@
-use crate::shell::{ShellCommandArgs, execute_shell_command};
+use crate::{
+    config::Config,
+    shell::{ShellCommandArgs, execute_shell_command},
+};
 use openrouter_api::types::chat::Message;
 
-pub fn handle_tool_calls(response_message: &Message) -> Vec<Message> {
+pub fn handle_tool_calls(response_message: &Message, config: &Config) -> Vec<Message> {
     let mut tool_messages = Vec::new();
 
     if let Some(tool_calls) = &response_message.tool_calls {
@@ -14,7 +17,10 @@ pub fn handle_tool_calls(response_message: &Message) -> Vec<Message> {
                     match serde_json::from_str::<ShellCommandArgs>(
                         &tool_call.function_call.arguments,
                     ) {
-                        Ok(args) => match execute_shell_command(&args.command) {
+                        Ok(args) => match execute_shell_command(
+                            &args.command,
+                            &config.allowed_command_prefixes,
+                        ) {
                             Ok(output) => Message {
                                 role: "tool".to_string(),
                                 content: output,

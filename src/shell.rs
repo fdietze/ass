@@ -4,9 +4,6 @@ use openrouter_api::models::tool::{FunctionDescription, Tool};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
-// --- Constants ---
-const WHITELISTED_COMMAND_PREFIXES: &[&str] = &["ls", "cat", "echo", "pwd"];
-
 /// Defines the arguments structure for our shell command tool.
 /// The LLM will populate this structure.
 #[derive(Serialize, Deserialize)]
@@ -39,14 +36,14 @@ Only use one command per call."
 }
 
 /// Executes a shell command after ensuring it's on the whitelist.
-pub fn execute_shell_command(command: &str) -> Result<String> {
+pub fn execute_shell_command(command: &str, allowed_prefixes: &[String]) -> Result<String> {
     // --- Whitelist Check ---
-    if !WHITELISTED_COMMAND_PREFIXES
+    if !allowed_prefixes
         .iter()
         .any(|prefix| command.starts_with(prefix))
     {
         let error_message = format!(
-            "Error: Command '{command}' is not allowed. Only commands starting with {WHITELISTED_COMMAND_PREFIXES:?} are permitted."
+            "Error: Command '{command}' is not allowed. Only commands starting with {allowed_prefixes:?} are permitted."
         );
         println!("{}", error_message.red());
         return Err(anyhow::anyhow!(error_message));
