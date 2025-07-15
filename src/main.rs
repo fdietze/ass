@@ -65,6 +65,7 @@ async fn main() -> Result<()> {
         list_files::list_files_tool_schema(),
     ];
 
+    println!("Model: {}\n", config.model);
     for message in &messages {
         print!("{}", pretty_print_message(message));
     }
