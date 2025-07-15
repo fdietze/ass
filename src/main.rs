@@ -56,7 +56,7 @@ async fn main() -> Result<()> {
     let tools = vec![shell_tool_schema()];
 
     for message in &messages {
-        pretty_print_message(message);
+        print!("{}", pretty_print_message(message));
     }
 
     for _i in 0..config.max_iterations {
@@ -75,13 +75,13 @@ async fn main() -> Result<()> {
 
         if let Some(choice) = response.choices.first() {
             let response_message = choice.message.clone();
-            pretty_print_message(&response_message);
+            print!("{}", pretty_print_message(&response_message));
             messages.push(response_message.clone());
 
             if response_message.tool_calls.is_some() {
                 let tool_messages = tool_executor::handle_tool_calls(&response_message, &config);
                 for tool_message in tool_messages {
-                    pretty_print_message(&tool_message);
+                    print!("{}", pretty_print_message(&tool_message));
                     messages.push(tool_message);
                 }
             } else {
