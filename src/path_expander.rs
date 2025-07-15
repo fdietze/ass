@@ -1,4 +1,5 @@
 use ignore::WalkBuilder;
+use ignore::overrides::OverrideBuilder;
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -8,17 +9,27 @@ pub struct ExpansionResult {
     pub not_found: Vec<String>,
 }
 
-pub fn expand_and_validate(paths: &[String]) -> ExpansionResult {
+pub fn expand_and_validate(paths: &[String], ignored_paths: &[String]) -> ExpansionResult {
     let mut files = BTreeSet::new();
     let mut not_found = Vec::new();
+
+    let mut override_builder = OverrideBuilder::new(std::env::current_dir().unwrap());
+    for pattern in ignored_paths {
+        // We add a `!` prefix to make it an ignore pattern.
+        let ignore_pattern = format!("!{pattern}");
+        override_builder.add(&ignore_pattern).unwrap();
+    }
+    let overrides = override_builder.build().unwrap();
 
     for path_str in paths {
         let path = Path::new(path_str);
         if path.exists() {
-            for entry in WalkBuilder::new(path).hidden(false).build().flatten() {
-                if entry.path().components().any(|c| c.as_os_str() == ".git") {
-                    continue;
-                }
+            for entry in WalkBuilder::new(path)
+                .hidden(false)
+                .overrides(overrides.clone())
+                .build()
+                .flatten()
+            {
                 if entry.file_type().is_some_and(|ft| ft.is_file()) {
                     files.insert(entry.path().to_string_lossy().into_owned());
                 }
@@ -77,7 +88,7 @@ mod tests {
             "non_existent_file.txt".to_string(),
         ];
 
-        let result = expand_and_validate(&paths);
+        let result = expand_and_validate(&paths, &[]);
 
         let expected_files = vec![
             format!("{root}/file1.txt"),
@@ -100,7 +111,7 @@ mod tests {
             format!("{root}/sub_dir/file2.txt"),
         ];
 
-        let result = expand_and_validate(&paths);
+        let result = expand_and_validate(&paths, &[]);
 
         let expected_files = paths.clone();
 
@@ -116,7 +127,7 @@ mod tests {
         let (_tmp_dir, root) = setup_test_dir();
         let paths = vec![format!("{root}/sub_dir")];
 
-        let result = expand_and_validate(&paths);
+        let result = expand_and_validate(&paths, &[]);
 
         let expected_files = vec![
             format!("{root}/sub_dir/file2.txt"),
@@ -133,7 +144,7 @@ mod tests {
     #[test]
     fn test_non_existent_paths() {
         let paths = vec!["no_such_file.rs".to_string(), "no_such_dir/".to_string()];
-        let result = expand_and_validate(&paths);
+        let result = expand_and_validate(&paths, &[]);
         assert_eq!(
             result,
             ExpansionResult {
@@ -152,7 +163,7 @@ mod tests {
             format!("{root}/"),          // root dir which contains file1.txt
         ];
 
-        let result = expand_and_validate(&paths);
+        let result = expand_and_validate(&paths, &[".git".to_string()]);
 
         let expected_files = vec![
             format!("{root}/.gitignore"),
@@ -171,7 +182,7 @@ mod tests {
     #[test]
     fn test_empty_input() {
         let paths: Vec<String> = vec![];
-        let result = expand_and_validate(&paths);
+        let result = expand_and_validate(&paths, &[]);
         assert_eq!(
             result,
             ExpansionResult {
@@ -186,7 +197,7 @@ mod tests {
         let (_tmp_dir, root) = setup_test_dir();
         let paths = vec![format!("{root}/")];
 
-        let result = expand_and_validate(&paths);
+        let result = expand_and_validate(&paths, &[".git".to_string()]);
 
         let unexpected_files = vec![
             format!("{root}/a.log"),
@@ -218,12 +229,39 @@ mod tests {
         let (_tmp_dir, root) = setup_test_dir();
         let paths = vec![format!("{root}/")];
 
-        let result = expand_and_validate(&paths);
+        // This test now relies on the default config behavior
+        let ignored_paths = vec![".git".to_string()];
+        let result = expand_and_validate(&paths, &ignored_paths);
         let git_file = format!("{root}/.git/config");
 
         assert!(
             !result.files.contains(&git_file),
             ".git directory contents should be ignored"
         );
+    }
+
+    #[test]
+    fn test_custom_ignored_paths() {
+        let (_tmp_dir, root) = setup_test_dir();
+        let paths = vec![format!("{root}/")];
+
+        // Ignore the sub_dir entirely
+        let ignored_paths = vec!["sub_dir".to_string()];
+        let result = expand_and_validate(&paths, &ignored_paths);
+
+        let unexpected_files = vec![
+            format!("{root}/sub_dir/file2.txt"),
+            format!("{root}/sub_dir/another_file.rs"),
+        ];
+
+        for unexpected in unexpected_files {
+            assert!(
+                !result.files.contains(&unexpected),
+                "File '{unexpected}' should have been ignored via custom path"
+            );
+        }
+
+        // Make sure other files are still there
+        assert!(result.files.contains(&format!("{root}/file1.txt")));
     }
 }

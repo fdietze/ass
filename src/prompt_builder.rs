@@ -2,13 +2,17 @@ use crate::{enricher, path_expander};
 use anyhow::Result;
 use colored::Colorize;
 
-pub async fn build_user_prompt(original_prompt: &str) -> Result<String> {
+pub async fn build_user_prompt(
+    original_prompt: &str,
+    config: &crate::config::Config,
+) -> Result<String> {
     let enrichments = enricher::extract_enrichments(original_prompt);
     if enrichments.mentioned_files.is_empty() {
         return Ok(original_prompt.to_string());
     }
 
-    let expansion_result = path_expander::expand_and_validate(&enrichments.mentioned_files);
+    let expansion_result =
+        path_expander::expand_and_validate(&enrichments.mentioned_files, &config.ignored_paths);
 
     for not_found_path in &expansion_result.not_found {
         eprintln!(

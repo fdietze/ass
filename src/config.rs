@@ -14,6 +14,7 @@ pub struct Config {
     pub timeout_seconds: u64,
     pub max_iterations: u8,
     pub allowed_command_prefixes: Vec<String>,
+    pub ignored_paths: Vec<String>,
 }
 
 impl Default for Config {
@@ -29,6 +30,7 @@ impl Default for Config {
                 "echo".to_string(),
                 "pwd".to_string(),
             ],
+            ignored_paths: vec![".git".to_string()],
         }
     }
 }
@@ -80,6 +82,11 @@ pub fn load_or_create() -> Result<Config> {
             default_config.allowed_command_prefixes
         } else {
             config.allowed_command_prefixes
+        },
+        ignored_paths: if config.ignored_paths.is_empty() {
+            default_config.ignored_paths
+        } else {
+            config.ignored_paths
         },
     };
 

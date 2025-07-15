@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
         cli::Commands::Agent { prompt } => prompt,
     };
 
-    let final_prompt = build_user_prompt(&original_prompt).await?;
+    let final_prompt = build_user_prompt(&original_prompt, &config).await?;
 
     let api_key = utils::load_api_key_from_env().expect("OPENROUTER_API_KEY not set");
     let or_client = OpenRouterClient::new()
