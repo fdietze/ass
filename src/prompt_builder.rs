@@ -1,0 +1,60 @@
+use crate::{enricher, path_expander};
+use anyhow::Result;
+use colored::Colorize;
+
+pub async fn build_user_prompt(original_prompt: &str) -> Result<String> {
+    let enrichments = enricher::extract_enrichments(original_prompt);
+    if enrichments.mentioned_files.is_empty() {
+        return Ok(original_prompt.to_string());
+    }
+
+    let expansion_result = path_expander::expand_and_validate(&enrichments.mentioned_files);
+
+    for not_found_path in &expansion_result.not_found {
+        eprintln!(
+            "{} Could not find file: {}",
+            "Warning:".yellow(),
+            not_found_path
+        );
+    }
+
+    let mut content_parts = Vec::new();
+    for file_path in &expansion_result.files {
+        match tokio::fs::read_to_string(file_path).await {
+            Ok(content) => content_parts.push((file_path.clone(), content)),
+            Err(e) => eprintln!(
+                "{} Failed to read file {}: {}",
+                "Error:".red(),
+                file_path,
+                e
+            ),
+        }
+    }
+
+    if content_parts.is_empty() && expansion_result.not_found.is_empty() {
+        return Ok(original_prompt.to_string());
+    }
+
+    let mut final_prompt = String::new();
+
+    if !content_parts.is_empty() {
+        final_prompt.push_str("Here is the content of the files you requested:\n\n");
+        for (path, content) in content_parts {
+            final_prompt.push_str(&format!("### `{path}`\n"));
+            final_prompt.push_str("```\n");
+            final_prompt.push_str(&content);
+            final_prompt.push_str("\n```\n---\n");
+        }
+    }
+
+    if !expansion_result.not_found.is_empty() {
+        final_prompt.push_str(&format!(
+            "Note: The following files were mentioned but could not be found and are not included: {}\n\n",
+            expansion_result.not_found.join(", ")
+        ));
+    }
+
+    final_prompt.push_str(original_prompt);
+
+    Ok(final_prompt)
+}

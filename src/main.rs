@@ -9,9 +9,13 @@ use std::time::Duration;
 
 mod cli;
 mod config;
+mod enricher;
+mod path_expander;
+mod prompt_builder;
 mod shell;
 mod tool_executor;
 mod ui;
+use crate::prompt_builder::build_user_prompt;
 use crate::shell::shell_tool_schema;
 use crate::ui::pretty_print_message;
 
@@ -20,9 +24,11 @@ async fn main() -> Result<()> {
     let cli = cli::Cli::parse();
     let config = config::load_or_create()?;
 
-    let prompt = match cli.command {
+    let original_prompt = match cli.command {
         cli::Commands::Agent { prompt } => prompt,
     };
+
+    let final_prompt = build_user_prompt(&original_prompt).await?;
 
     let api_key = utils::load_api_key_from_env().expect("OPENROUTER_API_KEY not set");
     let or_client = OpenRouterClient::new()
@@ -40,7 +46,7 @@ async fn main() -> Result<()> {
         },
         Message {
             role: "user".to_string(),
-            content: prompt,
+            content: final_prompt,
             name: None,
             tool_calls: None,
             tool_call_id: None,
