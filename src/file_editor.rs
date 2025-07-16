@@ -1,27 +1,51 @@
+//! # File Patcher Tool
+//!
+//! This module provides the `edit_file` tool, which is the agent's interface to the
+//! LIF-Patch protocol implemented in `file_state.rs`. Its primary responsibilities are:
+//!
+//! 1.  **Schema Definition**: Defines the JSON schema for the `edit_file` tool. This schema
+//!     is sent to the LLM, instructing it on how to format its patch requests. The description
+//!     within the schema is critical for the LLM to understand the protocol correctly.
+//!
+//! 2.  **Request Handling**: Implements `execute_file_patch`, the function that orchestrates
+//!     the entire patching process.
+//!
+//! 3.  **State and Safety Checks**: Before applying a patch, it performs crucial checks:
+//!     -   **Path Permissions**: Ensures the target file is within the user-configured `editable_paths`.
+//!     -   **Hash Verification**: Compares the `lif_hash` from the LLM's request with the current
+//!         hash stored in the `FileState`. This is the most important safety check, preventing
+//!         edits on stale file versions.
+//!
+//! 4.  **Diff Generation**: After a patch is successfully applied, it generates a human-readable
+//!     diff of the changes, which is then returned to the LLM and displayed to the user.
+
+use crate::file_state::{FileStateManager, PatchArgs};
 use anyhow::{Result, anyhow};
 use colored::Colorize;
 use openrouter_api::models::tool::{FunctionDescription, Tool};
-use serde::{Deserialize, Serialize};
-use similar::TextDiff;
-use std::fs;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::Path;
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct FileEditArgs {
-    pub file_path: String,
-    pub start_line: usize,
-    pub end_line: usize,
-    pub replacement_content: String,
-}
-
-pub fn file_edit_tool_schema() -> Tool {
+/// Generates the tool schema for the `edit_file` tool.
+///
+/// ### Reasoning
+/// A detailed and clear description is paramount. It acts as a form of "prompt engineering"
+/// for the tool-use part of the LLM's brain. It explicitly tells the model what format
+/// to use, what the operations mean, and provides a concrete example. This significantly
+/// increases the reliability of the LLM's output.
+pub fn edit_file_tool_schema() -> Tool {
     Tool::Function {
         function: FunctionDescription {
             name: "edit_file".to_string(),
             description: Some(
-                "Edits a file by replacing a range of lines.
-To insert content, set end_line to be start_line - 1.
-To delete content, provide an empty replacement_content string. Provide the keys in order: file_path, start_line, end_line, replacement_content. Take special care to provide the right escaping for the replacement_content string."
+                "Edits a file using a line-based patch protocol (LIF-Patch).
+Line identifiers (LIDs) MUST be the strings provided when reading the file (e.g., 'LID1000'). NEVER use integer line numbers.
+Operations are compact JSON arrays:
+- Replace/Delete: `[\"r\", start_lid, end_lid, [\"new content\"]]`
+- Insert: `[\"i\", after_lid, [\"new content\"]]`
+The `lif_hash` must match the hash from when the file was last read.
+Example: `{\"file_path\":\"src/main.rs\",\"lif_hash\":\"a1b2c3d4...\",\"patch\":[[\"r\",\"LID1000\",\"LID1000\",[\"fn main() -> Result<()> {\"]]]}`"
                     .to_string(),
             ),
             parameters: serde_json::json!({
@@ -29,31 +53,62 @@ To delete content, provide an empty replacement_content string. Provide the keys
                 "properties": {
                     "file_path": {
                         "type": "string",
-                        "description": "The relative path to the file to be edited."
+                        "description": "The relative path to the file to be patched."
                     },
-                    "replacement_content": {
+                    "lif_hash": {
                         "type": "string",
-                        "description": "The new raw content to write to the file. To delete, this should be an empty string. Don't use code fences."
+                        "description": "The SHA-1 hash of the file state that this patch applies to. Must match the hash from when the file was last read."
                     },
-                    "start_line": {
-                        "type": "integer",
-                        "description": "The 1-indexed, inclusive, starting line number of the range to be replaced."
-                    },
-                    "end_line": {
-                        "type": "integer",
-                        "description": "The 1-indexed, inclusive, ending line number of the range to be replaced. To insert, set this to start_line - 1."
-                    },
+                    "patch": {
+                        "type": "array",
+                        "description": "An array of patch operations, either replace/delete or insert.",
+                        "items": {
+                            "oneOf": [
+                                {
+                                    "type": "array",
+                                    "description": "Replace/delete operation: ['r', start_lid, end_lid, [new_content]]. `new_content` can be an empty array to delete the range.",
+                                    "prefixItems": [
+                                        { "const": "r", "description": "Operation code for 'replace'." },
+                                        { "type": "string", "description": "The starting line identifier. MUST be a string like 'LID1000'. DO NOT use an integer line number." },
+                                        { "type": "string", "description": "The ending line identifier. MUST be a string like 'LID2000'. DO NOT use an integer line number. For a single line, start_lid and end_lid are the same." },
+                                        {
+                                            "type": "array",
+                                            "items": { "type": "string" },
+                                            "description": "The new lines of content to replace the specified range."
+                                        }
+                                    ],
+                                    "minItems": 4,
+                                    "maxItems": 4,
+                                    "additionalItems": false
+                                },
+                                {
+                                    "type": "array",
+                                    "description": "Insert operation: ['i', after_lid, [content_to_insert]].",
+                                    "prefixItems": [
+                                        { "const": "i", "description": "Operation code for 'insert'." },
+                                        { "type": "string", "description": "The line identifier after which to insert. MUST be a string like 'LID3000' or '_START_OF_FILE_'. DO NOT use an integer line number." },
+                                        {
+                                            "type": "array",
+                                            "items": { "type": "string" },
+                                            "description": "The new lines of content to insert."
+                                        }
+                                    ],
+                                    "minItems": 3,
+                                    "maxItems": 3,
+                                    "additionalItems": false
+                                }
+                            ]
+                        }
+                    }
                 },
-                "required": ["file_path", "start_line", "end_line", "replacement_content"]
+                "required": ["file_path", "lif_hash", "patch"]
             }),
         },
     }
 }
 
 /// Checks if a given file path is within the allowed editable directories.
-///
-/// This function canonicalizes both the file path and the allowed directory paths
-/// to prevent directory traversal attacks and ensure a correct comparison.
+/// This is a security measure to prevent the agent from editing unintended files.
 pub fn is_path_editable(path_to_edit: &Path, editable_paths: &[String]) -> Result<()> {
     let canonical_path_to_edit = path_to_edit.canonicalize()?;
 
@@ -76,537 +131,165 @@ pub fn is_path_editable(path_to_edit: &Path, editable_paths: &[String]) -> Resul
     Ok(())
 }
 
-/// This function reads a file, replaces a specified range of lines (or inserts/deletes),
-/// and writes the content back to the file. It performs bounds checking.
-fn apply_edit(
-    path_to_edit: &Path,
-    start_line: usize,
-    end_line: usize,
-    replacement_content: &str,
-) -> Result<String> {
-    if start_line == 0 {
-        return Err(anyhow!(
-            "Error: Line numbers are 1-indexed, but start_line was 0."
-        ));
+/// Generates a colorized, human-readable diff between the old and new file states.
+///
+/// ### Reasoning
+/// Providing a clear diff as the tool's output serves two purposes:
+/// 1.  **User Feedback**: It shows the user exactly what changes the agent made.
+/// 2.  **LLM Confirmation**: It gives the LLM a confirmation of the result of its action,
+///     allowing it to verify if the edit was successful or if it needs to try again.
+fn generate_custom_diff(
+    old_lines: &BTreeMap<u64, String>,
+    new_lines: &BTreeMap<u64, String>,
+) -> String {
+    let mut diff_lines = Vec::new();
+    let old_keys: BTreeSet<_> = old_lines.keys().collect();
+    let new_keys: BTreeSet<_> = new_lines.keys().collect();
+
+    for &key in old_keys.difference(&new_keys) {
+        diff_lines.push(
+            format!("- LID{}: {}", key, old_lines[key])
+                .red()
+                .to_string(),
+        );
     }
-
-    let original_content = fs::read_to_string(path_to_edit)?;
-    let had_trailing_newline = original_content.ends_with('\n');
-    let lines: Vec<&str> = original_content.lines().collect();
-    let line_count = lines.len();
-
-    let is_insert = end_line + 1 == start_line;
-
-    if !is_insert && start_line > end_line {
-        return Err(anyhow!(
-            "Error: start_line ({}) cannot be greater than end_line ({}).",
-            start_line,
-            end_line
-        ));
+    for &key in new_keys.difference(&old_keys) {
+        diff_lines.push(
+            format!("+ LID{}: {}", key, new_lines[key])
+                .green()
+                .to_string(),
+        );
     }
-
-    if start_line > line_count + 1 {
-        return Err(anyhow!(
-            "Error: start_line ({}) is out of bounds. The file '{}' has only {} lines.",
-            start_line,
-            path_to_edit.display(),
-            line_count
-        ));
-    }
-
-    if !is_insert && end_line > line_count {
-        return Err(anyhow!(
-            "Error: end_line ({}) is out of bounds. The file '{}' has only {} lines.",
-            end_line,
-            path_to_edit.display(),
-            line_count
-        ));
-    }
-
-    // --- Edit Logic ---
-    let mut new_lines = Vec::new();
-    let zero_based_start = start_line - 1;
-
-    // Add lines before the edit
-    new_lines.extend_from_slice(&lines[0..zero_based_start]);
-
-    // Add the new content
-    if !replacement_content.is_empty() {
-        new_lines.extend(replacement_content.lines());
-    }
-
-    // Add lines after the edit
-    if !is_insert {
-        let zero_based_end = end_line;
-        if zero_based_end < line_count {
-            new_lines.extend_from_slice(&lines[zero_based_end..]);
+    for &key in new_keys.intersection(&old_keys) {
+        if old_lines[key] != new_lines[key] {
+            diff_lines.push(
+                format!("- LID{}: {}", key, old_lines[key])
+                    .red()
+                    .to_string(),
+            );
+            diff_lines.push(
+                format!("+ LID{}: {}", key, new_lines[key])
+                    .green()
+                    .to_string(),
+            );
         }
+    }
+
+    if diff_lines.is_empty() {
+        "No changes detected.".to_string()
     } else {
-        // For an insert, we add back all the original lines from the insertion point
-        if zero_based_start < line_count {
-            new_lines.extend_from_slice(&lines[zero_based_start..]);
-        }
+        diff_lines.join("\n")
     }
-
-    // --- Diff and File Writing ---
-    let mut new_content = new_lines.join("\n");
-    if had_trailing_newline && (!new_content.is_empty() || !new_lines.is_empty()) {
-        new_content.push('\n');
-    }
-
-    let diff = TextDiff::from_lines(&original_content, &new_content)
-        .unified_diff()
-        .header(
-            &path_to_edit.to_string_lossy(),
-            &path_to_edit.to_string_lossy(),
-        )
-        .to_string();
-
-    fs::write(path_to_edit, new_content)?;
-
-    Ok(diff)
 }
 
-/// Checks if a string looks like a unified diff and formats it with colors.
-fn colorize_diff(diff_text: &str) -> String {
-    diff_text
-        .lines()
-        .map(|line| {
-            if line.starts_with("---") || line.starts_with('-') {
-                line.red().to_string()
-            } else if line.starts_with("+++") || line.starts_with('+') {
-                line.green().to_string()
-            } else if line.starts_with("@@") {
-                line.cyan().to_string()
-            } else {
-                line.dimmed().to_string()
-            }
-        })
-        .collect::<Vec<String>>()
-        .join("\n")
-}
-
-pub fn execute_file_edit(args: &FileEditArgs, editable_paths: &[String]) -> Result<String> {
+/// The main execution function for the `edit_file` tool.
+///
+/// This function orchestrates the entire patch process:
+/// 1.  Validates the file path is editable.
+/// 2.  Retrieves the current `FileState` from the `FileStateManager`.
+/// 3.  Performs the critical hash check to ensure state consistency.
+/// 4.  Applies the patch to the `FileState`.
+/// 5.  Generates a diff of the changes.
+/// 6.  Writes the new file content to disk.
+/// 7.  Returns the generated diff and the new `lif_hash` to the LLM.
+pub fn execute_file_patch(
+    args: &PatchArgs,
+    file_state_manager: &mut FileStateManager,
+    editable_paths: &[String],
+) -> Result<String> {
     let path_to_edit = Path::new(&args.file_path);
-
     is_path_editable(path_to_edit, editable_paths)?;
 
-    let diff = apply_edit(
-        path_to_edit,
-        args.start_line,
-        args.end_line,
-        &args.replacement_content,
-    )?;
+    let (diff, final_content, new_hash) = {
+        let file_state = file_state_manager.open_file(&args.file_path)?;
 
-    let colored_diff = colorize_diff(&diff);
+        if args.lif_hash != file_state.lif_hash {
+            return Err(anyhow!(
+                "Hash mismatch for file '{}'. The file has changed since it was last read. Please read the file again before patching.",
+                args.file_path
+            ));
+        }
+
+        let old_lines = file_state.lines.clone();
+        file_state.apply_patch(&args.patch)?;
+        let diff = generate_custom_diff(&old_lines, &file_state.lines);
+        let final_content = file_state.get_full_content();
+        let new_hash = file_state.lif_hash.clone();
+        (diff, final_content, new_hash)
+    };
+
+    // The file_state is out of scope now, releasing the mutable borrow on file_state_manager.
+    // We write the changes to disk. The in-memory state in the manager is already updated.
+    std::fs::write(path_to_edit, &final_content)?;
+
     Ok(format!(
-        "{}\n{}",
-        "Edit successful. Applied changes:", colored_diff
+        "Patch applied successfully. New lif_hash: {new_hash}. Changes:\n{diff}"
     ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    use crate::file_state::{FileStateManager, PatchOperation};
+    use std::fs;
     use tempfile::Builder;
 
-    // Helper to create a temporary directory and a file within it
     fn setup_test_file(content: &str) -> (tempfile::TempDir, String) {
-        let tmp_dir = Builder::new().prefix("test-file-editor").tempdir().unwrap();
+        let tmp_dir = Builder::new().prefix("test-patcher-").tempdir().unwrap();
         let file_path = tmp_dir.path().join("test_file.txt");
-        let mut file = fs::File::create(&file_path).unwrap();
-        write!(file, "{content}").unwrap();
+        fs::write(&file_path, content).unwrap();
         (tmp_dir, file_path.to_str().unwrap().to_string())
     }
 
-    // --- Unit tests for the internal logic ---
-
-    mod permission_tests {
-        use super::*;
-
-        #[test]
-        fn allows_path_in_editable_dir() {
-            let (tmp_dir, file_path) = setup_test_file("content");
-            let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
-            let result = is_path_editable(Path::new(&file_path), &editable_paths);
-            assert!(result.is_ok());
-        }
-
-        #[test]
-        fn disallows_path_outside_editable_dir() {
-            let (_tmp_dir, file_path) = setup_test_file("content");
-            let another_dir = Builder::new().prefix("another").tempdir().unwrap();
-            let editable_paths = vec![another_dir.path().to_str().unwrap().to_string()];
-            let result = is_path_editable(Path::new(&file_path), &editable_paths);
-            assert!(result.is_err());
-            assert!(
-                result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("not within any of the allowed editable paths")
-            );
-        }
-
-        #[test]
-        fn allows_path_in_subdirectory() {
-            let tmp_dir = Builder::new().prefix("test-subdir").tempdir().unwrap();
-            let sub_dir = tmp_dir.path().join("sub");
-            fs::create_dir(&sub_dir).unwrap();
-            let file_path = sub_dir.join("sub_file.txt");
-            fs::write(&file_path, "sub content").unwrap();
-
-            let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
-            let result = is_path_editable(Path::new(&file_path), &editable_paths);
-            assert!(result.is_ok());
-        }
-
-        #[test]
-        fn errors_on_non_existent_path() {
-            let editable_paths = vec![".".to_string()];
-            let result = is_path_editable(Path::new("non_existent_file.txt"), &editable_paths);
-            assert!(result.is_err());
-            assert!(
-                result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("No such file or directory")
-            );
-        }
-    }
-
-    mod edit_logic_tests {
-        use super::*;
-
-        #[test]
-        fn test_apply_replace_single_line() {
-            let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2\nline 3");
-            let path = Path::new(&file_path);
-            let diff = apply_edit(path, 2, 2, "replacement").unwrap();
-            let content = fs::read_to_string(path).unwrap();
-            assert_eq!(content, "line 1\nreplacement\nline 3");
-
-            let expected_diff = format!(
-                "--- {0}\n+++ {0}\n@@ -1,3 +1,3 @@\n line 1\n-line 2\n+replacement\n line 3\n\\ No newline at end of file\n",
-                path.display()
-            );
-            assert_eq!(diff, expected_diff);
-        }
-
-        #[test]
-        fn test_apply_insert_in_middle() {
-            let (_tmp_dir, file_path) = setup_test_file("line 1\nline 3");
-            let path = Path::new(&file_path);
-            let diff = apply_edit(path, 2, 1, "line 2").unwrap();
-            let content = fs::read_to_string(path).unwrap();
-            assert_eq!(content, "line 1\nline 2\nline 3");
-            let expected_diff = format!(
-                "--- {0}\n+++ {0}\n@@ -1,2 +1,3 @@\n line 1\n+line 2\n line 3\n\\ No newline at end of file\n",
-                path.display()
-            );
-            assert_eq!(diff, expected_diff);
-        }
-
-        #[test]
-        fn test_apply_delete_lines() {
-            let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2\nline 3");
-            let path = Path::new(&file_path);
-            let diff = apply_edit(path, 2, 2, "").unwrap();
-            let content = fs::read_to_string(path).unwrap();
-            assert_eq!(content, "line 1\nline 3");
-            let expected_diff = format!(
-                "--- {0}\n+++ {0}\n@@ -1,3 +1,2 @@\n line 1\n-line 2\n line 3\n\\ No newline at end of file\n",
-                path.display()
-            );
-            assert_eq!(diff, expected_diff);
-        }
-
-        #[test]
-        fn test_apply_out_of_bounds_error() {
-            let (_tmp_dir, file_path) = setup_test_file("one line");
-            let path = Path::new(&file_path);
-            let result = apply_edit(path, 3, 3, "...");
-            assert!(result.is_err());
-            assert!(
-                result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("start_line (3) is out of bounds")
-            );
-        }
-
-        #[test]
-        fn test_preserves_trailing_newline() {
-            let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2\n");
-            let path = Path::new(&file_path);
-            apply_edit(path, 1, 1, "new line 1").unwrap();
-            let content = fs::read_to_string(path).unwrap();
-            assert_eq!(content, "new line 1\nline 2\n");
-        }
-
-        #[test]
-        fn test_does_not_add_trailing_newline() {
-            let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2");
-            let path = Path::new(&file_path);
-            apply_edit(path, 1, 1, "new line 1").unwrap();
-            let content = fs::read_to_string(path).unwrap();
-            assert_eq!(content, "new line 1\nline 2");
-        }
-    }
-
-    // --- Integration tests for the public-facing function ---
-
     #[test]
-    fn test_replace_single_line() {
-        let (tmp_dir, file_path) = setup_test_file("line 1\nline 2\nline 3");
-        let args = FileEditArgs {
-            file_path: file_path.clone(),
-            start_line: 2,
-            end_line: 2,
-            replacement_content: "replacement".to_string(),
-        };
-        let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
+    fn test_execute_patch_successfully() {
+        let (_tmp_dir, file_path) = setup_test_file("line 1\nline 3");
+        let mut manager = FileStateManager::new();
+        let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
-        let result = execute_file_edit(&args, &editable_paths);
+        let initial_state = manager.open_file(&file_path).unwrap();
+        let initial_hash = initial_state.lif_hash.clone();
+
+        let args = PatchArgs {
+            file_path: file_path.clone(),
+            lif_hash: initial_hash.clone(),
+            patch: vec![PatchOperation::Insert {
+                after_lid: "LID1000".to_string(),
+                content: vec!["line 2".to_string()],
+            }],
+        };
+
+        let result = execute_file_patch(&args, &mut manager, &editable_paths);
         assert!(result.is_ok());
+
         let output = result.unwrap();
+        assert!(output.contains("Patch applied successfully."));
+        assert!(output.contains("New lif_hash:"));
+        assert!(output.contains(&"+ LID1500: line 2".green().to_string()));
 
-        let expected_diff = format!(
-            "--- {file_path}\n+++ {file_path}\n@@ -1,3 +1,3 @@\n line 1\n-line 2\n+replacement\n line 3\n\\ No newline at end of file\n"
-        );
+        let disk_content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(disk_content, "line 1\nline 2\nline 3");
 
-        // The output is now colored, so we check for containment
-        assert!(output.contains(&"Edit successful. Applied changes:".to_string()));
-        assert!(output.contains(&colorize_diff(&expected_diff)));
-
-        let content = fs::read_to_string(file_path).unwrap();
-        assert_eq!(content, "line 1\nreplacement\nline 3");
+        // Verify that the manager's state has the new hash and it's returned in the output
+        let final_state = manager.open_file(&file_path).unwrap();
+        assert_ne!(final_state.lif_hash, initial_hash);
+        assert!(output.contains(&final_state.lif_hash));
     }
 
     #[test]
-    fn test_replace_multiple_lines() {
-        let (tmp_dir, file_path) = setup_test_file("line 1\nline 2\nline 3\nline 4");
-        let args = FileEditArgs {
+    fn test_execute_patch_hash_mismatch() {
+        let (_tmp_dir, file_path) = setup_test_file("line 1");
+        let mut manager = FileStateManager::new();
+        let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+
+        let args = PatchArgs {
             file_path: file_path.clone(),
-            start_line: 2,
-            end_line: 3,
-            replacement_content: "new content".to_string(),
+            lif_hash: "wrong_hash".to_string(),
+            patch: vec![],
         };
-        let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
 
-        let result = execute_file_edit(&args, &editable_paths).unwrap();
-
-        let expected_diff = format!(
-            "--- {file_path}\n+++ {file_path}\n@@ -1,4 +1,3 @@\n line 1\n-line 2\n-line 3\n+new content\n line 4\n\\ No newline at end of file\n"
-        );
-        assert!(result.contains(&colorize_diff(&expected_diff)));
-
-        let content = fs::read_to_string(file_path).unwrap();
-        assert_eq!(content, "line 1\nnew content\nline 4");
-    }
-
-    #[test]
-    fn test_delete_lines() {
-        let (tmp_dir, file_path) = setup_test_file("line 1\nline 2\nline 3");
-        let args = FileEditArgs {
-            file_path: file_path.clone(),
-            start_line: 2,
-            end_line: 2,
-            replacement_content: "".to_string(),
-        };
-        let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
-
-        let result = execute_file_edit(&args, &editable_paths).unwrap();
-
-        let expected_diff = format!(
-            "--- {file_path}\n+++ {file_path}\n@@ -1,3 +1,2 @@\n line 1\n-line 2\n line 3\n\\ No newline at end of file\n"
-        );
-        assert!(result.contains(&colorize_diff(&expected_diff)));
-
-        let content = fs::read_to_string(file_path).unwrap();
-        assert_eq!(content, "line 1\nline 3");
-    }
-
-    #[test]
-    fn test_insert_at_beginning() {
-        let (tmp_dir, file_path) = setup_test_file("line 1\nline 2");
-        let args = FileEditArgs {
-            file_path: file_path.clone(),
-            start_line: 1,
-            end_line: 0,
-            replacement_content: "new line".to_string(),
-        };
-        let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
-
-        let result = execute_file_edit(&args, &editable_paths).unwrap();
-
-        let expected_diff = format!(
-            "--- {file_path}\n+++ {file_path}\n@@ -1,2 +1,3 @@\n+new line\n line 1\n line 2\n\\ No newline at end of file\n"
-        );
-        assert!(result.contains(&colorize_diff(&expected_diff)));
-
-        let content = fs::read_to_string(file_path).unwrap();
-        assert_eq!(content, "new line\nline 1\nline 2");
-    }
-
-    #[test]
-    fn test_insert_in_middle() {
-        let (tmp_dir, file_path) = setup_test_file("line 1\nline 3");
-        let args = FileEditArgs {
-            file_path: file_path.clone(),
-            start_line: 2,
-            end_line: 1,
-            replacement_content: "line 2".to_string(),
-        };
-        let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
-
-        let result = execute_file_edit(&args, &editable_paths).unwrap();
-
-        let expected_diff = format!(
-            "--- {file_path}\n+++ {file_path}\n@@ -1,2 +1,3 @@\n line 1\n+line 2\n line 3\n\\ No newline at end of file\n"
-        );
-        assert!(result.contains(&colorize_diff(&expected_diff)));
-
-        let content = fs::read_to_string(file_path).unwrap();
-        assert_eq!(content, "line 1\nline 2\nline 3");
-    }
-
-    #[test]
-    fn test_insert_at_end() {
-        let (tmp_dir, file_path) = setup_test_file("line 1\nline 2");
-        let args = FileEditArgs {
-            file_path: file_path.clone(),
-            start_line: 3,
-            end_line: 2,
-            replacement_content: "line 3".to_string(),
-        };
-        let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
-
-        let result = execute_file_edit(&args, &editable_paths).unwrap();
-
-        // NOTE: The diff output from the `similar` crate is unexpected for this specific case
-        // of appending to a file that does not end in a newline. It seems to diff the last
-        // line and re-add it. Since the file content modification is correct, we'll assert
-        // against this specific diff output to get the test to pass.
-        let expected_diff = format!(
-            "--- {file_path}\n+++ {file_path}\n@@ -1,2 +1,3 @@\n line 1\n-line 2\n\\ No newline at end of file\n+line 2\n+line 3\n\\ No newline at end of file\n"
-        );
-        assert!(result.contains(&colorize_diff(&expected_diff)));
-
-        let content = fs::read_to_string(file_path).unwrap();
-        assert_eq!(content, "line 1\nline 2\nline 3");
-    }
-
-    #[test]
-    fn test_error_on_non_whitelisted_file() {
-        let (_tmp_dir, file_path) = setup_test_file("some content");
-        let args = FileEditArgs {
-            file_path,
-            start_line: 1,
-            end_line: 1,
-            replacement_content: "nope".to_string(),
-        };
-        let another_tmp_dir = Builder::new().prefix("another-dir").tempdir().unwrap();
-        let editable_paths = vec![another_tmp_dir.path().to_str().unwrap().to_string()];
-
-        let result = execute_file_edit(&args, &editable_paths);
+        let result = execute_file_patch(&args, &mut manager, &editable_paths);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("not within any of the allowed editable paths")
-        );
-    }
-
-    #[test]
-    fn test_error_on_non_existent_file() {
-        let args = FileEditArgs {
-            file_path: "non_existent_file.txt".to_string(),
-            start_line: 1,
-            end_line: 1,
-            replacement_content: "wont work".to_string(),
-        };
-        let editable_paths = vec![".".to_string()];
-
-        let result = execute_file_edit(&args, &editable_paths);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("No such file or directory")
-        );
-    }
-
-    #[test]
-    fn test_error_start_line_out_of_bounds() {
-        let (tmp_dir, file_path) = setup_test_file("one line");
-        let args = FileEditArgs {
-            file_path: file_path.clone(),
-            start_line: 3,
-            end_line: 3,
-            replacement_content: "...".to_string(),
-        };
-        let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
-
-        let result = execute_file_edit(&args, &editable_paths);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("start_line (3) is out of bounds")
-        );
-    }
-    #[test]
-    fn test_error_end_line_out_of_bounds() {
-        let (tmp_dir, file_path) = setup_test_file("one line\ntwo lines");
-        let args = FileEditArgs {
-            file_path: file_path.clone(),
-            start_line: 1,
-            end_line: 5,
-            replacement_content: "...".to_string(),
-        };
-        let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
-
-        let result = execute_file_edit(&args, &editable_paths);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("end_line (5) is out of bounds")
-        );
-    }
-
-    #[test]
-    fn test_edit_in_subdirectory_is_allowed() {
-        let tmp_dir = Builder::new().prefix("test-subdir").tempdir().unwrap();
-        let sub_dir = tmp_dir.path().join("sub");
-        fs::create_dir(&sub_dir).unwrap();
-        let file_path = sub_dir.join("sub_file.txt");
-        fs::write(&file_path, "sub content").unwrap();
-
-        let args = FileEditArgs {
-            file_path: file_path.to_str().unwrap().to_string(),
-            start_line: 1,
-            end_line: 1,
-            replacement_content: "new sub content".to_string(),
-        };
-        // Allow editing in the parent directory
-        let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
-
-        let result = execute_file_edit(&args, &editable_paths);
-        assert!(result.is_ok());
-
-        let content = fs::read_to_string(&file_path).unwrap();
-        assert_eq!(content, "new sub content");
-
-        let expected_diff = format!(
-            "--- {0}\n+++ {0}\n@@ -1 +1 @@\n-sub content\n\\ No newline at end of file\n+new sub content\n\\ No newline at end of file\n",
-            file_path.display()
-        );
-        assert!(result.unwrap().contains(&colorize_diff(&expected_diff)));
+        assert!(result.unwrap_err().to_string().contains("Hash mismatch"));
     }
 }

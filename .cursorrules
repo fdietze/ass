@@ -7,4 +7,4 @@
     - use rand::seq::IndexedRandom;
     - rand::thread_rng() is deprecated, use rand::rng() instead.
     - rng::gen_range() is deprecated, use rng.random_range() instead.
-- variables should be used directly in the `format!` string: format!("{my_variable}")
+- variables should be used directly in the `format!`, `println!`, `assert!` strings: format!("{my_variable}")

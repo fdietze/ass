@@ -12,6 +12,7 @@ mod config;
 mod enricher;
 mod file_editor;
 mod file_reader;
+mod file_state;
 mod list_files;
 mod path_expander;
 mod prompt_builder;
@@ -20,6 +21,7 @@ mod streaming_executor;
 mod tool_executor;
 mod ui;
 
+use crate::file_state::FileStateManager;
 use crate::prompt_builder::build_user_prompt;
 use crate::shell::shell_tool_schema;
 use crate::ui::pretty_print_message;
@@ -28,12 +30,14 @@ use crate::ui::pretty_print_message;
 async fn main() -> Result<()> {
     let cli = cli::Cli::parse();
     let config = config::load_or_create()?;
+    let mut file_state_manager = FileStateManager::new();
 
     let original_prompt = match cli.command {
         cli::Commands::Agent { prompt } => prompt,
     };
 
-    let final_prompt = build_user_prompt(&original_prompt, &config).await?;
+    let final_prompt =
+        build_user_prompt(&original_prompt, &config, &mut file_state_manager).await?;
 
     let api_key = utils::load_api_key_from_env().expect("OPENROUTER_API_KEY not set");
     let or_client = OpenRouterClient::new()
@@ -60,7 +64,7 @@ async fn main() -> Result<()> {
 
     let tools = vec![
         shell_tool_schema(),
-        file_editor::file_edit_tool_schema(),
+        file_editor::edit_file_tool_schema(),
         file_reader::read_file_tool_schema(),
         list_files::list_files_tool_schema(),
     ];
@@ -88,7 +92,11 @@ async fn main() -> Result<()> {
         messages.push(response_message.clone());
 
         if response_message.tool_calls.is_some() {
-            let tool_messages = tool_executor::handle_tool_calls(&response_message, &config);
+            let tool_messages = tool_executor::handle_tool_calls(
+                &response_message,
+                &config,
+                &mut file_state_manager,
+            );
             for tool_message in tool_messages {
                 messages.push(tool_message);
             }

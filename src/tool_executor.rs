@@ -1,15 +1,29 @@
 use crate::{
     config::Config,
-    file_editor::{FileEditArgs, execute_file_edit},
+    file_editor::execute_file_patch,
     file_reader::{FileReadArgs, execute_read_file},
+    file_state::{FileStateManager, PatchArgs},
     list_files::{ListFilesArgs, execute_list_files},
     shell::{ShellCommandArgs, execute_shell_command},
 };
 use colored::Colorize;
 use openrouter_api::types::chat::Message;
+use std::io::{self, Write};
 use strip_ansi_escapes::strip_str;
 
-pub fn handle_tool_calls(response_message: &Message, config: &Config) -> Vec<Message> {
+fn wait_for_enter() {
+    print!("\n{}", "Press Enter to continue...".dimmed());
+    io::stdout().flush().unwrap();
+    let mut buffer = String::new();
+    io::stdin().read_line(&mut buffer).unwrap();
+    print!("\r");
+}
+
+pub fn handle_tool_calls(
+    response_message: &Message,
+    config: &Config,
+    file_state_manager: &mut FileStateManager,
+) -> Vec<Message> {
     let mut tool_messages = Vec::new();
 
     if let Some(tool_calls) = &response_message.tool_calls {
@@ -17,6 +31,9 @@ pub fn handle_tool_calls(response_message: &Message, config: &Config) -> Vec<Mes
             let tool_call_id = Some(tool_call.id.clone());
             let function_name = &tool_call.function_call.name;
             println!("\n[{}]", format!("tool: {function_name}").purple());
+            println!("{}", tool_call.function_call.arguments);
+
+            wait_for_enter();
 
             let tool_message = match function_name.as_str() {
                 "execute_shell_command" => {
@@ -49,19 +66,23 @@ pub fn handle_tool_calls(response_message: &Message, config: &Config) -> Vec<Mes
                     }
                 }
                 "edit_file" => {
-                    let result = match serde_json::from_str::<FileEditArgs>(
-                        &tool_call.function_call.arguments,
-                    ) {
-                        Ok(args) => execute_file_edit(&args, &config.editable_paths),
-                        Err(e) => Err(anyhow::anyhow!(
-                            "Error: Invalid arguments provided for {function_name}: {e}"
-                        )),
-                    };
+                    let result =
+                        match serde_json::from_str::<PatchArgs>(&tool_call.function_call.arguments)
+                        {
+                            Ok(args) => execute_file_patch(
+                                &args,
+                                file_state_manager,
+                                &config.editable_paths,
+                            ),
+                            Err(e) => Err(anyhow::anyhow!(
+                                "Error: Invalid arguments provided for {function_name}: {e}"
+                            )),
+                        };
 
                     let (colored_output, uncolored_output) = match result {
                         Ok(output) => (output.clone(), strip_str(&output)),
                         Err(e) => {
-                            let error_msg = format!("Error executing file edit: {e}");
+                            let error_msg = format!("Error executing file patch: {e}");
                             (error_msg.red().to_string(), error_msg)
                         }
                     };
@@ -79,7 +100,7 @@ pub fn handle_tool_calls(response_message: &Message, config: &Config) -> Vec<Mes
                     let result = match serde_json::from_str::<FileReadArgs>(
                         &tool_call.function_call.arguments,
                     ) {
-                        Ok(args) => execute_read_file(&args, config),
+                        Ok(args) => execute_read_file(&args, config, file_state_manager),
                         Err(e) => Err(anyhow::anyhow!(
                             "Error: Invalid arguments provided for {function_name}: {e}"
                         )),

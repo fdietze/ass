@@ -1,10 +1,11 @@
-use crate::{enricher, path_expander};
+use crate::{enricher, file_state::FileStateManager, path_expander};
 use anyhow::Result;
 use colored::Colorize;
 
 pub async fn build_user_prompt(
     original_prompt: &str,
     config: &crate::config::Config,
+    file_state_manager: &mut FileStateManager,
 ) -> Result<String> {
     let enrichments = enricher::extract_enrichments(original_prompt);
     if enrichments.mentioned_files.is_empty() {
@@ -22,12 +23,15 @@ pub async fn build_user_prompt(
         );
     }
 
-    let mut content_parts = Vec::new();
+    let mut attached_files_content = String::new();
     for file_path in &expansion_result.files {
-        match tokio::fs::read_to_string(file_path).await {
-            Ok(content) => content_parts.push((file_path.clone(), content)),
+        match file_state_manager.open_file(file_path) {
+            Ok(file_state) => {
+                attached_files_content.push_str(&file_state.get_lif_representation());
+                attached_files_content.push('\n');
+            }
             Err(e) => eprintln!(
-                "{} Failed to read file {}: {}",
+                "{} Failed to open file state for {}: {}",
                 "Error:".red(),
                 file_path,
                 e
@@ -35,21 +39,16 @@ pub async fn build_user_prompt(
         }
     }
 
-    if content_parts.is_empty() && expansion_result.not_found.is_empty() {
+    if attached_files_content.is_empty() && expansion_result.not_found.is_empty() {
         return Ok(original_prompt.to_string());
     }
 
     let mut final_prompt = String::new();
     final_prompt.push_str(original_prompt);
 
-    if !content_parts.is_empty() {
+    if !attached_files_content.is_empty() {
         final_prompt.push_str(&format!("\n\n{}\n", "Attached file contents:".dimmed()));
-        for (path, content) in content_parts {
-            final_prompt.push_str(&format!("### `{path}`\n"));
-            final_prompt.push_str("```\n");
-            final_prompt.push_str(&format_with_line_numbers(&content));
-            final_prompt.push_str("\n```\n---\n");
-        }
+        final_prompt.push_str(&attached_files_content);
     }
 
     if !expansion_result.not_found.is_empty() {
@@ -60,22 +59,4 @@ pub async fn build_user_prompt(
     }
 
     Ok(final_prompt)
-}
-
-fn format_with_line_numbers(content: &str) -> String {
-    let line_count = content.lines().count();
-    if line_count == 0 {
-        return String::new();
-    }
-    let max_line_number_width = line_count.to_string().len();
-
-    content
-        .lines()
-        .enumerate()
-        .map(|(i, line)| {
-            let line_number = i + 1;
-            format!("{line_number: >max_line_number_width$} | {line}")
-        })
-        .collect::<Vec<String>>()
-        .join("\n")
 }
