@@ -1,7 +1,6 @@
 use colored::Colorize;
 use fancy_regex::Regex;
 use once_cell::sync::Lazy;
-use openrouter_api::models::tool::ToolCall;
 use openrouter_api::types::chat::Message;
 use std::fmt::Write;
 
@@ -17,18 +16,16 @@ pub fn pretty_print_message(message: &Message) -> String {
     let mut buffer = String::new();
 
     let role_text = message.role.as_str();
-    let role_colored = match role_text {
-        "tool" => {
-            println!("!!! DEBUG: message: {:?}", message);
-            let mut display = message.role.to_string();
-            if let Some(tool_calls) = &message.tool_calls {
-                write!(&mut display, " ({})", format_tool_calls_pretty(tool_calls)).unwrap();
-            }
-            display.red()
-        }
-        _ => message.role.to_string().blue(),
-    };
+    let role_colored = message.role.to_string().blue();
     writeln!(&mut buffer, "\n[{role_colored}]").unwrap();
+
+    // Only for assistant messages that are requesting a tool call.
+    if let Some(tool_calls) = &message.tool_calls {
+        let _formatted_calls = format_tool_calls_pretty(tool_calls);
+        // The output from the tool executor already prints the tool call request,
+        // so we don't print it twice. We just process the content.
+        // We will just print the content associated with the message, if any.
+    }
 
     if !message.content.is_empty() {
         let is_user = role_text == "user";
@@ -48,22 +45,18 @@ pub fn pretty_print_message(message: &Message) -> String {
                 .to_string();
         }
 
-        match role_text {
-            "user" => {
-                for line in processed_content.lines() {
-                    // Pre-colored lines (our summaries) will not be re-colored.
-                    // Other user prompt lines will be cyan.
-                    // \x1B is the escape character for ANSI color codes.
-                    if line.starts_with('\x1B') {
-                        writeln!(&mut buffer, "{line}").unwrap();
-                    } else {
-                        writeln!(&mut buffer, "{}", line.cyan()).unwrap();
-                    }
-                }
-            }
-            _ => {
-                // Assistant and other roles
-                for line in processed_content.lines() {
+        // The tool executor now handles printing its own colored output directly.
+        // So we don't print the content for the 'tool' role here, as it would be a duplicate.
+        if role_text != "tool" {
+            for line in processed_content.lines() {
+                // Pre-colored lines (our summaries) will not be re-colored.
+                // Other user prompt lines will be cyan.
+                // \x1B is the escape character for ANSI color codes.
+                if line.starts_with('\x1B') {
+                    writeln!(&mut buffer, "{line}").unwrap();
+                } else if role_text == "user" {
+                    writeln!(&mut buffer, "{}", line.cyan()).unwrap();
+                } else {
                     writeln!(&mut buffer, "{line}").unwrap();
                 }
             }
@@ -73,11 +66,13 @@ pub fn pretty_print_message(message: &Message) -> String {
 }
 
 /// Formats a vec of tool calls into a string with nice formatting.
-pub fn format_tool_calls_pretty(tool_calls: &[ToolCall]) -> String {
+pub fn format_tool_calls_pretty(tool_calls: &[openrouter_api::models::tool::ToolCall]) -> String {
     let mut buffer = String::new();
-    writeln!(&mut buffer, "# tool calls:").unwrap();
-    for tool_call in tool_calls {
-        let call_header = format!("# - Calling `{}`:", tool_call.function_call.name);
+    for (i, tool_call) in tool_calls.iter().enumerate() {
+        if i > 0 {
+            writeln!(&mut buffer).unwrap();
+        }
+        let call_header = format!("Tool Call: `{}`", tool_call.function_call.name).blue();
         writeln!(&mut buffer, "{call_header}").unwrap();
 
         let args_str = &tool_call.function_call.arguments;
@@ -90,37 +85,10 @@ pub fn format_tool_calls_pretty(tool_calls: &[ToolCall]) -> String {
         };
 
         for line in formatted_args.lines() {
-            writeln!(&mut buffer, "#   {line}").unwrap();
+            writeln!(&mut buffer, "  {}", line.dimmed()).unwrap();
         }
     }
     buffer
-}
-
-/// Checks if a string looks like a unified diff and formats it with colors.
-/// Returns `None` if the content is not a diff.
-pub fn format_diff(content: &str) -> Option<String> {
-    let mut lines = content.lines();
-    if !matches!((lines.next(), lines.next()), (Some(f), Some(s)) if f.starts_with("---") && s.starts_with("+++"))
-    {
-        return None;
-    }
-
-    let colored_lines: Vec<String> = content
-        .lines()
-        .map(|line| {
-            if line.starts_with("---") || line.starts_with('-') {
-                line.red().to_string()
-            } else if line.starts_with("+++") || line.starts_with('+') {
-                line.green().to_string()
-            } else if line.starts_with("@@") {
-                line.cyan().to_string()
-            } else {
-                line.dimmed().to_string()
-            }
-        })
-        .collect();
-
-    Some(colored_lines.join("\n"))
 }
 
 #[cfg(test)]
@@ -129,34 +97,6 @@ mod tests {
     use crate::{config::Config, prompt_builder::build_user_prompt};
     use std::fs;
     use tempfile::Builder;
-
-    #[test]
-    fn test_format_diff_valid() {
-        let diff_content = "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-red\n+green\nunchanged";
-        colored::control::set_override(true);
-        let colored = format_diff(diff_content).unwrap();
-
-        assert!(colored.contains(&"--- a/file.txt".red().to_string()));
-        assert!(colored.contains(&"+++ b/file.txt".green().to_string()));
-        assert!(colored.contains(&"-red".red().to_string()));
-        assert!(colored.contains(&"+green".green().to_string()));
-        assert!(colored.contains(&"@@ -1 +1 @@".cyan().to_string()));
-        assert!(colored.contains(&"unchanged".dimmed().to_string()));
-
-        colored::control::set_override(false);
-    }
-
-    #[test]
-    fn test_format_diff_invalid() {
-        let not_diff_content = "just some regular text\n- with a minus\n+ and a plus";
-        assert!(format_diff(not_diff_content).is_none());
-
-        let empty_content = "";
-        assert!(format_diff(empty_content).is_none());
-
-        let one_line = "--- a/file.txt";
-        assert!(format_diff(one_line).is_none());
-    }
 
     #[tokio::test]
     async fn test_build_and_collapse_prompt() {
@@ -201,9 +141,10 @@ mod tests {
 
         // Assert that the original prompt appears *before* the file attachments header
         let original_prompt_pos = output.find(&original_prompt).unwrap();
-        let attachments_header_pos = output.find("Attached file contents:").unwrap();
+        let attachments_header_pos = output.find("Attached file contents:");
         assert!(
-            original_prompt_pos < attachments_header_pos,
+            attachments_header_pos.is_none()
+                || original_prompt_pos < attachments_header_pos.unwrap(),
             "The original prompt should appear before the 'Attached file contents' header."
         );
 

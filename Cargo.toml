@@ -19,6 +19,7 @@ ignore = "0.4.23"
 similar = { version = "2.7.0", features = ["inline"] }
 tempfile = "3.20.0"
 futures = "0.3.31"
+strip-ansi-escapes = "0.2.1"
 
 [dev-dependencies]
 tempfile = "3.20.0"

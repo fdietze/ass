@@ -1,5 +1,6 @@
 use crate::{config::Config, file_editor::is_path_editable, path_expander};
 use anyhow::{Result, anyhow};
+use colored::Colorize;
 use openrouter_api::models::tool::{FunctionDescription, Tool};
 use serde::Deserialize;
 use std::path::Path;
@@ -49,11 +50,14 @@ pub fn execute_list_files(args: &ListFilesArgs, config: &Config) -> Result<Strin
     if expansion_result.files.is_empty() {
         return Ok(format!(
             "# No files found in '{}'. It might be empty or all files are ignored.",
-            path_to_list.display()
+            path_to_list.display().to_string().cyan()
         ));
     }
 
-    let header = format!("# Files in '{}':\n", path_to_list.display());
+    let header = format!(
+        "List of files in `{}`:\n",
+        path_to_list.display().to_string().blue()
+    );
     let file_list = expansion_result.files.join("\n");
 
     Ok(format!("{header}{file_list}"))

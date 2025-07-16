@@ -45,7 +45,7 @@ pub fn execute_shell_command(command: &str, allowed_prefixes: &[String]) -> Resu
         let error_message = format!(
             "Error: Command '{command}' is not allowed. Only commands starting with {allowed_prefixes:?} are permitted."
         );
-        println!("{}", error_message.red());
+        // We don't need to print here, the executor will do it.
         return Err(anyhow::anyhow!(error_message));
     }
 
@@ -58,8 +58,19 @@ pub fn execute_shell_command(command: &str, allowed_prefixes: &[String]) -> Resu
     let status = output.status;
 
     let command_bold = command.bold();
+    let exit_code_colored = if status.success() {
+        status.to_string().green()
+    } else {
+        status.to_string().red()
+    };
+
     let result = format!(
-        "> {command_bold}\n# Stdout:\n{stdout}\n# Stderr:\n{stderr}\n# Exit Code: {status}",
+        "> {command_bold}\n{stdout_header}{stdout}\n{stderr_header}{stderr}\n{exit_code_header}{exit_code_colored}",
+        stdout_header = "# Stdout:\n".dimmed(),
+        stdout = stdout,
+        stderr_header = "# Stderr:\n".dimmed(),
+        stderr = stderr,
+        exit_code_header = "# Exit Code: ".dimmed(),
     );
 
     Ok(result)

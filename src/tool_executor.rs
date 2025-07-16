@@ -7,6 +7,7 @@ use crate::{
 };
 use colored::Colorize;
 use openrouter_api::types::chat::Message;
+use strip_ansi_escapes::strip_str;
 
 pub fn handle_tool_calls(response_message: &Message, config: &Config) -> Vec<Message> {
     let mut tool_messages = Vec::new();
@@ -15,94 +16,114 @@ pub fn handle_tool_calls(response_message: &Message, config: &Config) -> Vec<Mes
         for tool_call in tool_calls {
             let tool_call_id = Some(tool_call.id.clone());
             let function_name = &tool_call.function_call.name;
-            println!(
-                "\n[{}]",
-                format!("{}: {}", "tool".purple(), function_name).purple()
-            );
+            println!("\n[{}]", format!("tool: {function_name}").purple());
 
             let tool_message = match function_name.as_str() {
                 "execute_shell_command" => {
-                    let content = match serde_json::from_str::<ShellCommandArgs>(
+                    let result = match serde_json::from_str::<ShellCommandArgs>(
                         &tool_call.function_call.arguments,
                     ) {
-                        Ok(args) => match execute_shell_command(
-                            &args.command,
-                            &config.allowed_command_prefixes,
-                        ) {
-                            Ok(output) => output,
-                            Err(e) => format!("Error executing command: {e}"),
-                        },
+                        Ok(args) => {
+                            execute_shell_command(&args.command, &config.allowed_command_prefixes)
+                        }
+                        Err(e) => Err(anyhow::anyhow!(
+                            "Error: Invalid arguments provided for {function_name}: {e}"
+                        )),
+                    };
+
+                    let (colored_output, uncolored_output) = match result {
+                        Ok(output) => (output.clone(), strip_str(&output)),
                         Err(e) => {
-                            format!("Error: Invalid arguments provided for {function_name}: {e}")
+                            let error_msg = format!("Error executing command: {e}");
+                            (error_msg.red().to_string(), error_msg)
                         }
                     };
-                    println!("{}", content);
+
+                    println!("{colored_output}");
                     Message {
                         role: "tool".to_string(),
-                        content,
+                        content: uncolored_output,
                         tool_call_id,
                         name: None,
                         tool_calls: None,
                     }
                 }
                 "edit_file" => {
-                    let content = match serde_json::from_str::<FileEditArgs>(
+                    let result = match serde_json::from_str::<FileEditArgs>(
                         &tool_call.function_call.arguments,
                     ) {
-                        Ok(args) => match execute_file_edit(&args, &config.editable_paths) {
-                            Ok(output) => output,
-                            Err(e) => format!("Error executing file edit: {e}"),
-                        },
+                        Ok(args) => execute_file_edit(&args, &config.editable_paths),
+                        Err(e) => Err(anyhow::anyhow!(
+                            "Error: Invalid arguments provided for {function_name}: {e}"
+                        )),
+                    };
+
+                    let (colored_output, uncolored_output) = match result {
+                        Ok(output) => (output.clone(), strip_str(&output)),
                         Err(e) => {
-                            format!("Error: Invalid arguments provided for {function_name}: {e}")
+                            let error_msg = format!("Error executing file edit: {e}");
+                            (error_msg.red().to_string(), error_msg)
                         }
                     };
-                    println!("{}", content);
+
+                    println!("{colored_output}");
                     Message {
                         role: "tool".to_string(),
-                        content,
+                        content: uncolored_output,
                         tool_call_id,
                         name: None,
                         tool_calls: None,
                     }
                 }
                 "read_file" => {
-                    let content = match serde_json::from_str::<FileReadArgs>(
+                    let result = match serde_json::from_str::<FileReadArgs>(
                         &tool_call.function_call.arguments,
                     ) {
-                        Ok(args) => match execute_read_file(&args, config) {
-                            Ok(output) => output,
-                            Err(e) => format!("Error reading file: {e}"),
-                        },
+                        Ok(args) => execute_read_file(&args, config),
+                        Err(e) => Err(anyhow::anyhow!(
+                            "Error: Invalid arguments provided for {function_name}: {e}"
+                        )),
+                    };
+
+                    let (colored_output, uncolored_output) = match result {
+                        Ok(output) => (output.clone(), strip_str(&output)),
                         Err(e) => {
-                            format!("Error: Invalid arguments provided for {function_name}: {e}")
+                            let error_msg = format!("Error reading file: {e}");
+                            (error_msg.red().to_string(), error_msg)
                         }
                     };
-                    println!("{}", content);
+
+                    println!("{colored_output}");
                     Message {
                         role: "tool".to_string(),
-                        content,
+                        content: uncolored_output,
                         tool_call_id,
                         name: None,
                         tool_calls: None,
                     }
                 }
                 "list_files" => {
-                    let content = match serde_json::from_str::<ListFilesArgs>(
+                    let result = match serde_json::from_str::<ListFilesArgs>(
                         &tool_call.function_call.arguments,
                     ) {
-                        Ok(args) => match execute_list_files(&args, config) {
-                            Ok(output) => output,
-                            Err(e) => format!("Error listing files: {e}"),
-                        },
+                        Ok(args) => execute_list_files(&args, config),
+                        Err(e) => Err(anyhow::anyhow!(
+                            "Error: Invalid arguments provided for {function_name}: {e}"
+                        )),
+                    };
+
+                    let (colored_output, uncolored_output) = match result {
+                        Ok(output) => (output.clone(), strip_str(&output)),
                         Err(e) => {
-                            format!("Error: Invalid arguments provided for {function_name}: {e}")
+                            let error_msg = format!("Error listing files: {e}");
+                            (error_msg.red().to_string(), error_msg)
                         }
                     };
-                    println!("{}", content);
+
+                    println!("{colored_output}");
                     Message {
                         role: "tool".to_string(),
-                        content,
+                        content: uncolored_output,
                         tool_call_id,
                         name: None,
                         tool_calls: None,

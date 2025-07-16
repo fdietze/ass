@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use colored::Colorize;
 use openrouter_api::models::tool::{FunctionDescription, Tool};
 use serde::{Deserialize, Serialize};
 use similar::TextDiff;
@@ -166,6 +167,25 @@ fn apply_edit(
     Ok(diff)
 }
 
+/// Checks if a string looks like a unified diff and formats it with colors.
+fn colorize_diff(diff_text: &str) -> String {
+    diff_text
+        .lines()
+        .map(|line| {
+            if line.starts_with("---") || line.starts_with('-') {
+                line.red().to_string()
+            } else if line.starts_with("+++") || line.starts_with('+') {
+                line.green().to_string()
+            } else if line.starts_with("@@") {
+                line.cyan().to_string()
+            } else {
+                line.dimmed().to_string()
+            }
+        })
+        .collect::<Vec<String>>()
+        .join("\n")
+}
+
 pub fn execute_file_edit(args: &FileEditArgs, editable_paths: &[String]) -> Result<String> {
     let path_to_edit = Path::new(&args.file_path);
 
@@ -178,7 +198,11 @@ pub fn execute_file_edit(args: &FileEditArgs, editable_paths: &[String]) -> Resu
         &args.replacement_content,
     )?;
 
-    Ok(format!("Edit successful with diff:\n{diff}"))
+    let colored_diff = colorize_diff(&diff);
+    Ok(format!(
+        "{}\n{}",
+        "Edit successful. Applied changes:", colored_diff
+    ))
 }
 
 #[cfg(test)]
@@ -345,12 +369,15 @@ mod tests {
 
         let result = execute_file_edit(&args, &editable_paths);
         assert!(result.is_ok());
-        let diff = result.unwrap();
+        let output = result.unwrap();
 
         let expected_diff = format!(
             "--- {file_path}\n+++ {file_path}\n@@ -1,3 +1,3 @@\n line 1\n-line 2\n+replacement\n line 3\n\\ No newline at end of file\n"
         );
-        assert_eq!(diff, expected_diff);
+
+        // The output is now colored, so we check for containment
+        assert!(output.contains(&"Edit successful. Applied changes:".to_string()));
+        assert!(output.contains(&colorize_diff(&expected_diff)));
 
         let content = fs::read_to_string(file_path).unwrap();
         assert_eq!(content, "line 1\nreplacement\nline 3");
@@ -367,12 +394,12 @@ mod tests {
         };
         let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
 
-        let diff = execute_file_edit(&args, &editable_paths).unwrap();
+        let result = execute_file_edit(&args, &editable_paths).unwrap();
 
         let expected_diff = format!(
             "--- {file_path}\n+++ {file_path}\n@@ -1,4 +1,3 @@\n line 1\n-line 2\n-line 3\n+new content\n line 4\n\\ No newline at end of file\n"
         );
-        assert_eq!(diff, expected_diff);
+        assert!(result.contains(&colorize_diff(&expected_diff)));
 
         let content = fs::read_to_string(file_path).unwrap();
         assert_eq!(content, "line 1\nnew content\nline 4");
@@ -389,12 +416,12 @@ mod tests {
         };
         let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
 
-        let diff = execute_file_edit(&args, &editable_paths).unwrap();
+        let result = execute_file_edit(&args, &editable_paths).unwrap();
 
         let expected_diff = format!(
             "--- {file_path}\n+++ {file_path}\n@@ -1,3 +1,2 @@\n line 1\n-line 2\n line 3\n\\ No newline at end of file\n"
         );
-        assert_eq!(diff, expected_diff);
+        assert!(result.contains(&colorize_diff(&expected_diff)));
 
         let content = fs::read_to_string(file_path).unwrap();
         assert_eq!(content, "line 1\nline 3");
@@ -411,12 +438,12 @@ mod tests {
         };
         let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
 
-        let diff = execute_file_edit(&args, &editable_paths).unwrap();
+        let result = execute_file_edit(&args, &editable_paths).unwrap();
 
         let expected_diff = format!(
             "--- {file_path}\n+++ {file_path}\n@@ -1,2 +1,3 @@\n+new line\n line 1\n line 2\n\\ No newline at end of file\n"
         );
-        assert_eq!(diff, expected_diff);
+        assert!(result.contains(&colorize_diff(&expected_diff)));
 
         let content = fs::read_to_string(file_path).unwrap();
         assert_eq!(content, "new line\nline 1\nline 2");
@@ -433,12 +460,12 @@ mod tests {
         };
         let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
 
-        let diff = execute_file_edit(&args, &editable_paths).unwrap();
+        let result = execute_file_edit(&args, &editable_paths).unwrap();
 
         let expected_diff = format!(
             "--- {file_path}\n+++ {file_path}\n@@ -1,2 +1,3 @@\n line 1\n+line 2\n line 3\n\\ No newline at end of file\n"
         );
-        assert_eq!(diff, expected_diff);
+        assert!(result.contains(&colorize_diff(&expected_diff)));
 
         let content = fs::read_to_string(file_path).unwrap();
         assert_eq!(content, "line 1\nline 2\nline 3");
@@ -455,7 +482,7 @@ mod tests {
         };
         let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
 
-        let diff = execute_file_edit(&args, &editable_paths).unwrap();
+        let result = execute_file_edit(&args, &editable_paths).unwrap();
 
         // NOTE: The diff output from the `similar` crate is unexpected for this specific case
         // of appending to a file that does not end in a newline. It seems to diff the last
@@ -464,7 +491,7 @@ mod tests {
         let expected_diff = format!(
             "--- {file_path}\n+++ {file_path}\n@@ -1,2 +1,3 @@\n line 1\n-line 2\n\\ No newline at end of file\n+line 2\n+line 3\n\\ No newline at end of file\n"
         );
-        assert_eq!(diff, expected_diff);
+        assert!(result.contains(&colorize_diff(&expected_diff)));
 
         let content = fs::read_to_string(file_path).unwrap();
         assert_eq!(content, "line 1\nline 2\nline 3");
@@ -580,6 +607,6 @@ mod tests {
             "--- {0}\n+++ {0}\n@@ -1 +1 @@\n-sub content\n\\ No newline at end of file\n+new sub content\n\\ No newline at end of file\n",
             file_path.display()
         );
-        assert_eq!(result.unwrap(), expected_diff);
+        assert!(result.unwrap().contains(&colorize_diff(&expected_diff)));
     }
 }

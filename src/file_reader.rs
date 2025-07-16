@@ -1,5 +1,6 @@
 use crate::{config::Config, file_editor::is_path_editable};
 use anyhow::{Result, anyhow};
+use colored::Colorize;
 use openrouter_api::models::tool::{FunctionDescription, Tool};
 use serde::Deserialize;
 use std::cmp::min;
@@ -55,7 +56,10 @@ pub fn execute_read_file(args: &FileReadArgs, config: &Config) -> Result<String>
 
     // If the file is empty, return a specific message
     if line_count == 0 {
-        return Ok(format!("# File '{}' is empty.", path_to_read.display()));
+        return Ok(format!(
+            "# File '{}' is empty.",
+            path_to_read.display().to_string().blue()
+        ));
     }
 
     let start_line = args.start_line.unwrap_or(1);
@@ -96,28 +100,34 @@ pub fn execute_read_file(args: &FileReadArgs, config: &Config) -> Result<String>
         .enumerate()
         .map(|(i, line)| {
             let line_number = zero_based_start + i + 1;
-            format!("{line_number: >max_line_number_width$} | {line}")
+            format!(
+                "{} {} {line}",
+                format!("{line_number: >max_line_number_width$}").dimmed(),
+                "|".dimmed()
+            )
         })
         .collect();
 
     let mut output = selected_lines.join("\n");
     if truncated {
-        output.push_str("\n... (file content truncated)");
+        output.push_str(&format!("\n{}", "... (file content truncated)".dimmed()));
     }
 
-    Ok(format!(
-        "[{path_to_read}:{start_line}-{end_line}]\n{output}",
-        path_to_read = path_to_read.display(),
-        start_line = start_line,
-        end_line = end_line,
-        output = output,
-    ))
+    let header = format!(
+        "Contents of `{}:{}-{}`",
+        path_to_read.display().to_string().blue(),
+        start_line.to_string().yellow(),
+        end_line.to_string().yellow()
+    );
+
+    Ok(format!("{header}\n{output}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::Config;
+    use colored::Colorize;
     use std::io::Write;
     use tempfile::Builder;
 
@@ -137,14 +147,22 @@ mod tests {
             ..Default::default()
         };
         let args = FileReadArgs {
-            file_path,
+            file_path: file_path.clone(),
             start_line: None,
             end_line: None,
         };
 
         let result = execute_read_file(&args, &config).unwrap();
-        let expected = "1 | line 1\n2 | line 2\n3 | line 3";
-        assert_eq!(result, expected);
+
+        assert!(result.contains(&format!("{} {} line 1", "1".dimmed(), "|".dimmed())));
+        assert!(result.contains(&format!("{} {} line 2", "2".dimmed(), "|".dimmed())));
+        assert!(result.contains(&format!("{} {} line 3", "3".dimmed(), "|".dimmed())));
+        assert!(result.contains(&format!(
+            "Contents of `{}:{}-{}`",
+            file_path.blue(),
+            "1".yellow(),
+            "3".yellow()
+        )));
     }
 
     #[test]
@@ -155,14 +173,15 @@ mod tests {
             ..Default::default()
         };
         let args = FileReadArgs {
-            file_path,
+            file_path: file_path.clone(),
             start_line: Some(2),
             end_line: Some(4),
         };
 
         let result = execute_read_file(&args, &config).unwrap();
-        let expected = "2 | 2\n3 | 3\n4 | 4";
-        assert_eq!(result, expected);
+        assert!(result.contains(&format!("{} {} 2", "2".dimmed(), "|".dimmed())));
+        assert!(result.contains(&format!("{} {} 3", "3".dimmed(), "|".dimmed())));
+        assert!(result.contains(&format!("{} {} 4", "4".dimmed(), "|".dimmed())));
     }
 
     #[test]
@@ -174,14 +193,16 @@ mod tests {
             ..Default::default()
         };
         let args = FileReadArgs {
-            file_path,
+            file_path: file_path.clone(),
             start_line: None,
             end_line: None,
         };
 
         let result = execute_read_file(&args, &config).unwrap();
-        let expected = "1 | 1\n2 | 2\n3 | 3\n... (file content truncated)";
-        assert_eq!(result, expected);
+        assert!(result.contains(&format!("{} {} 1", "1".dimmed(), "|".dimmed())));
+        assert!(result.contains(&format!("{} {} 2", "2".dimmed(), "|".dimmed())));
+        assert!(result.contains(&format!("{} {} 3", "3".dimmed(), "|".dimmed())));
+        assert!(result.contains(&"... (file content truncated)".dimmed().to_string()));
     }
 
     #[test]
@@ -192,7 +213,7 @@ mod tests {
             ..Default::default()
         };
         let args = FileReadArgs {
-            file_path,
+            file_path: file_path.clone(),
             start_line: Some(5),
             end_line: Some(5),
         };
@@ -215,7 +236,7 @@ mod tests {
             ..Default::default()
         };
         let args = FileReadArgs {
-            file_path,
+            file_path: file_path.clone(),
             start_line: None,
             end_line: None,
         };
@@ -246,7 +267,10 @@ mod tests {
         let result = execute_read_file(&args, &config).unwrap();
         assert_eq!(
             result,
-            format!("# File '{}' is empty.", Path::new(&file_path).display())
+            format!(
+                "# File '{}' is empty.",
+                Path::new(&file_path).display().to_string().blue()
+            )
         );
     }
 }
