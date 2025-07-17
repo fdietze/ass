@@ -246,13 +246,52 @@ impl FileState {
     /// Generates the complete LIF representation of the file to be sent to the LLM.
     /// This includes the header with the file path and the crucial `lif_hash`.
     pub fn get_lif_representation(&self) -> String {
-        let body = self.get_lif_content_for_hashing();
+        self.get_lif_string_for_range(None, None)
+    }
+
+    /// Generates a LIF representation for a specific line range.
+    ///
+    /// This is the canonical way to display file content to the LLM. It generates
+    /// a consistent header and formats the selected lines with their LIDs.
+    pub fn get_lif_string_for_range(
+        &self,
+        start_line: Option<usize>,
+        end_line: Option<usize>,
+    ) -> String {
+        if self.lines.is_empty() {
+            return format!(
+                "---FILE: {} (lif-hash: {}) (lines 0-0 of 0)---\n[File is empty]",
+                self.path.display(),
+                self.lif_hash,
+            );
+        }
+
+        let line_count = self.lines.len();
+        let start_line_num = start_line.unwrap_or(1);
+        let end_line_num = end_line.unwrap_or(line_count);
+
         let header = format!(
-            "---FILE: {} (lif-hash: {}) (length: {})---\n",
+            "---FILE: {} (lif-hash: {}) (lines {}-{} of {})---\n",
             self.path.display(),
             self.lif_hash,
-            body.len()
+            start_line_num,
+            end_line_num,
+            line_count
         );
+
+        // This logic assumes a direct mapping from line number to LID, which is
+        // how they are created initially.
+        let start_lid = (start_line_num as u64) * STARTING_LID_GAP;
+        let end_lid = (end_line_num as u64) * STARTING_LID_GAP;
+
+        let body = self
+            .lines
+            .iter()
+            .filter(|&(&lid, _)| lid >= start_lid && lid <= end_lid)
+            .map(|(lid, content)| format!("LID{lid}: {content}"))
+            .collect::<Vec<String>>()
+            .join("\n");
+
         format!("{header}{body}")
     }
 
@@ -398,6 +437,39 @@ mod tests {
         let expected_lif_content = "LID1000: line 1\nLID2000: line 2";
         let expected_hash = FileState::calculate_hash(expected_lif_content);
         assert_eq!(state.lif_hash, expected_hash);
+    }
+
+    #[test]
+    fn test_get_lif_representation_new_format() {
+        let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2");
+        let state = FileState::new(file_path.clone(), "line 1\nline 2");
+        let representation = state.get_lif_representation();
+
+        let expected_header = format!(
+            "---FILE: {} (lif-hash: {}) (lines 1-2 of 2)---\n",
+            file_path.display(),
+            state.lif_hash
+        );
+        let expected_body = "LID1000: line 1\nLID2000: line 2";
+        assert_eq!(representation, format!("{expected_header}{expected_body}"));
+    }
+
+    #[test]
+    fn test_get_lif_string_for_range() {
+        let (_tmp_dir, file_path) = setup_test_file("1\n2\n3\n4\n5");
+        let state = FileState::new(file_path.clone(), "1\n2\n3\n4\n5");
+
+        let partial_representation = state.get_lif_string_for_range(Some(2), Some(4));
+        let expected_header = format!(
+            "---FILE: {} (lif-hash: {}) (lines 2-4 of 5)---\n",
+            file_path.display(),
+            state.lif_hash
+        );
+        let expected_body = "LID2000: 2\nLID3000: 3\nLID4000: 4";
+        assert_eq!(
+            partial_representation,
+            format!("{expected_header}{expected_body}")
+        );
     }
 
     #[test]

@@ -1,6 +1,5 @@
 use crate::{config::Config, file_editor::is_path_editable, file_state::FileStateManager};
 use anyhow::Result;
-use colored::Colorize;
 use openrouter_api::models::tool::{FunctionDescription, Tool};
 use serde::Deserialize;
 use std::path::Path;
@@ -54,37 +53,7 @@ pub fn execute_read_file(
 
     let file_state = file_state_manager.open_file(&args.file_path)?;
 
-    if file_state.lines.is_empty() {
-        return Ok(format!(
-            "# File '{}' is empty.",
-            path_to_read.display().to_string().blue()
-        ));
-    }
-
-    let line_count = file_state.lines.len();
-    let start_line = args.start_line.unwrap_or(1);
-    let end_line = args.end_line.unwrap_or(line_count);
-
-    let header = format!(
-        "---FILE: {} (lif-hash: {}) (lines {}-{} of {})---\n",
-        file_state.path.display(),
-        file_state.lif_hash,
-        start_line,
-        end_line,
-        line_count
-    );
-
-    let start_lid = (start_line as u64) * crate::file_state::STARTING_LID_GAP;
-    let end_lid = (end_line as u64) * crate::file_state::STARTING_LID_GAP;
-
-    let body = file_state
-        .lines
-        .range(start_lid..=end_lid)
-        .map(|(lid, content)| format!("LID{lid}: {content}"))
-        .collect::<Vec<String>>()
-        .join("\n");
-
-    Ok(format!("{header}{body}"))
+    Ok(file_state.get_lif_string_for_range(args.start_line, args.end_line))
 }
 
 #[cfg(test)]
@@ -122,6 +91,7 @@ mod tests {
         let expected_hash = file_state.lif_hash.clone();
 
         assert!(result.contains(&format!("(lif-hash: {expected_hash})")));
+        assert!(result.contains("(lines 1-3 of 3)"));
         assert!(result.contains("LID1000: line 1"));
         assert!(result.contains("LID2000: line 2"));
         assert!(result.contains("LID3000: line 3"));

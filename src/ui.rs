@@ -5,7 +5,7 @@ use openrouter_api::types::chat::Message;
 use std::fmt::Write;
 
 static LIF_HEADER_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"---FILE: (?P<path>.+?) \(lif-hash: (?P<hash>[a-f0-9]+)\) \(length: (?P<length>\d+)\)---\n").unwrap()
+    Regex::new(r"---FILE: (?P<path>.+?) \(lif-hash: (?P<hash>[a-f0-9]+)\) \(lines \d+-\d+ of (?P<total_lines>\d+)\)---").unwrap()
 });
 
 /// Formats a message into a string with nice formatting.
@@ -42,14 +42,20 @@ pub fn pretty_print_message(message: &Message) -> String {
                     .unwrap();
                 let path = &caps["path"];
                 let hash = &caps["hash"];
-                let length: usize = caps["length"].parse().unwrap_or(0);
+                let total_lines: usize = caps["total_lines"].parse().unwrap_or(0);
 
                 let content_start = mat.end();
-                let content_end = content_start + length;
-                let content = &message.content[content_start..content_end];
+                // We find the next occurrence of the delimiter to correctly capture the body,
+                // even if the body itself contains something that looks like a delimiter.
+                let next_delimiter_pos = LIF_HEADER_REGEX
+                    .find_from_pos(&message.content, content_start)
+                    .unwrap()
+                    .map(|m| m.start())
+                    .unwrap_or(message.content.len());
 
-                let line_count = content.lines().filter(|l| !l.is_empty()).count();
-                let summary = format!("[{} (hash: {}) ({} lines)]", path, &hash[..8], line_count);
+                let content_end = next_delimiter_pos;
+
+                let summary = format!("[{} (hash: {}) ({} lines)]", path, &hash[..8], total_lines);
                 final_content.push_str(&summary.dimmed());
 
                 last_match_end = content_end;
@@ -167,8 +173,7 @@ mod tests {
         // --- Arrange ---
         let tmp_dir = Builder::new().prefix("test-delimiter-").tempdir().unwrap();
         let file_path = tmp_dir.path().join("file_with_delimiter.rs");
-        let file_content =
-            "line 1\nconst FAKE_HEADER: &str = \"---FILE: fake/path.rs---\";\nline 3";
+        let file_content = "line 1\nconst FAKE_HEADER: &str = \"---FILE: fake/path.rs (lines 1-1 of 1)---\";\nline 3";
         fs::write(&file_path, file_content).unwrap();
 
         let config = Config::default();
