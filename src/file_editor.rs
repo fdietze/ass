@@ -40,12 +40,23 @@ pub fn edit_file_tool_schema() -> Tool {
             name: "edit_file".to_string(),
             description: Some(
                 "Edits a file using a line-based patch protocol (LIF-Patch).
-Line identifiers (LIDs) MUST be the strings provided when reading the file (e.g., 'LID1000'). NEVER use integer line numbers.
-Operations are compact JSON arrays:
-- Replace/Delete: `[\"r\", start_lid, end_lid, [\"new content\"]]`
-- Insert: `[\"i\", after_lid, [\"new content\"]]`
-The `lif_hash` must match the hash from when the file was last read.
-Example: `{\"file_path\":\"src/main.rs\",\"lif_hash\":\"a1b2c3d4...\",\"patch\":[[\"r\",\"LID1000\",\"LID1000\",[\"fn main() -> Result<()> {\"]]]}`"
+IMPORTANT: The file's content (with LIDs and lif_hash) MUST be in your context before you can use this tool. If it's not, use `read_file` first.
+
+**Strategy**:
+- **Think in hunks**: A good patch is like a `git diff` hunk. Prefer to replace a whole logical block (like a function, `if` statement, or `for` loop) if you're making multiple changes within it. This is more robust than many small, scattered edits.
+- **Refactor in one go**: When refactoring, apply all related changes to a file in a single tool call. For example, if you rename a function and a variable inside it, do it with one `patch` array, not two separate tool calls.
+- **Avoid large, unchanged blocks**: While replacing hunks is good, don't replace hundreds of lines if only a few are changing. Find a balance.
+
+**Operations**:
+- **Replace/Delete**: `[\"r\", start_lid, end_lid, [\"new content\"]]`. To delete, provide an empty array for `new_content`.
+- **Insert**: `[\"i\", after_lid, [\"new content\"]]`. Use `_START_OF_FILE_` for `after_lid` to insert at the beginning.
+
+**Important**:
+- Line identifiers (LIDs) MUST be the strings from when the file was read (e.g., 'LID1000'). NEVER use integer line numbers.
+- The `lif_hash` MUST match the hash from when the file was last read.
+
+**Example of a good 'hunk' patch**:
+`{\"file_path\":\"src/main.rs\",\"lif_hash\":\"a1b2c3d4...\",\"patch\":[[\"r\",\"LID5000\",\"LID9000\",[\"fn new_function_signature() -> Result<()> {\", \"    // ... new function body ...\", \"    Ok(())\", \"}\"]]]}`"
                     .to_string(),
             ),
             parameters: serde_json::json!({
@@ -66,7 +77,7 @@ Example: `{\"file_path\":\"src/main.rs\",\"lif_hash\":\"a1b2c3d4...\",\"patch\":
                             "oneOf": [
                                 {
                                     "type": "array",
-                                    "description": "Replace/delete operation: ['r', start_lid, end_lid, [new_content]]. `new_content` can be an empty array to delete the range.",
+                                    "description": "Replace a range of lines, like a 'diff hunk'. This is best for updating a whole function body or other logical block.",
                                     "prefixItems": [
                                         { "const": "r", "description": "Operation code for 'replace'." },
                                         { "type": "string", "description": "The starting line identifier. MUST be a string like 'LID1000'. DO NOT use an integer line number." },
@@ -83,7 +94,7 @@ Example: `{\"file_path\":\"src/main.rs\",\"lif_hash\":\"a1b2c3d4...\",\"patch\":
                                 },
                                 {
                                     "type": "array",
-                                    "description": "Insert operation: ['i', after_lid, [content_to_insert]].",
+                                    "description": "Insert a new block of lines after a specific line. Use `_START_OF_FILE_` as the `after_lid` to insert at the top of the file.",
                                     "prefixItems": [
                                         { "const": "i", "description": "Operation code for 'insert'." },
                                         { "type": "string", "description": "The line identifier after which to insert. MUST be a string like 'LID3000' or '_START_OF_FILE_'. DO NOT use an integer line number." },

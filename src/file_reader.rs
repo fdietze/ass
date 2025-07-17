@@ -17,8 +17,8 @@ pub fn read_file_tool_schema() -> Tool {
         function: FunctionDescription {
             name: "read_file".to_string(),
             description: Some(
-                "Reads a file, optionally from a start line to an end line.
-The output will be prefixed with line numbers."
+                "Reads a file into context for viewing or editing. Provides content, line IDs (LIDs), and a hash.
+IMPORTANT: Before using, check if the file content is already in your conversation history, like attached file contents. Do not re-read files that are already visible. Use this only for new files or if an edit failed due to a hash mismatch."
                     .to_string(),
             ),
             parameters: serde_json::json!({
