@@ -47,7 +47,7 @@ pub async fn expand_file_mentions(
     final_prompt.push_str(original_prompt);
 
     if !attached_files_content.is_empty() {
-        final_prompt.push_str(&format!("\n\n{}\n", "Attached file contents:".dimmed()));
+        final_prompt.push_str(&format!("\n\n{}\n", "Attached file contents:"));
         final_prompt.push_str(&attached_files_content);
     }
 

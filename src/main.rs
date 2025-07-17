@@ -26,7 +26,7 @@ mod ui;
 use crate::file_state::FileStateManager;
 use crate::prompt_builder::expand_file_mentions;
 use crate::shell::shell_tool_schema;
-use crate::ui::pretty_print_message;
+use crate::ui::{pretty_print_json, pretty_print_message};
 
 fn wait_for_enter() -> Result<()> {
     let prompt = "\nPress Enter to continue...".dimmed().to_string();
@@ -119,7 +119,7 @@ async fn main() -> Result<()> {
                     for tool_call in tool_calls {
                         let function_name = &tool_call.function_call.name;
                         println!("\n[{}]", format!("tool: {function_name}").purple());
-                        println!("{}", tool_call.function_call.arguments);
+                        println!("{}", pretty_print_json(&tool_call.function_call.arguments));
 
                         match wait_for_enter() {
                             Ok(()) => {}

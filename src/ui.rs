@@ -2,6 +2,7 @@ use colored::Colorize;
 use fancy_regex::Regex;
 use once_cell::sync::Lazy;
 use openrouter_api::types::chat::Message;
+use serde_json::Value;
 use std::fmt::Write;
 
 static LIF_HEADER_REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -17,24 +18,16 @@ pub fn pretty_print_message(message: &Message) -> String {
     let role_colored = message.role.to_string().blue();
     writeln!(&mut buffer, "\n[{role_colored}]").unwrap();
 
-    // Only for assistant messages that are requesting a tool call.
-    if let Some(tool_calls) = &message.tool_calls {
-        let _formatted_calls = format_tool_calls_pretty(tool_calls);
-        // The output from the tool executor already prints the tool call request,
-        // so we don't print it twice. We just process the content.
-        // We will just print the content associated with the message, if any.
-    }
-
     if !message.content.is_empty() {
-        let is_user = role_text == "user";
+        let should_collapse = role_text == "user" || role_text == "system";
         let mut final_content = String::new();
 
-        if is_user {
+        if should_collapse {
             let mut last_match_end = 0;
             for mat in LIF_HEADER_REGEX.find_iter(&message.content) {
                 let mat = mat.unwrap();
                 // Append text between the last match and this one
-                final_content.push_str(&message.content[last_match_end..mat.start()].cyan());
+                final_content.push_str(&message.content[last_match_end..mat.start()]);
 
                 let caps = LIF_HEADER_REGEX
                     .captures(&message.content[mat.start()..])
@@ -56,12 +49,12 @@ pub fn pretty_print_message(message: &Message) -> String {
                 let content_end = next_delimiter_pos;
 
                 let summary = format!("[{} (hash: {}) ({} lines)]", path, &hash[..8], total_lines);
-                final_content.push_str(&summary.dimmed());
+                final_content.push_str(&summary);
 
                 last_match_end = content_end;
             }
             // Append any remaining text after the last match
-            final_content.push_str(&message.content[last_match_end..].cyan());
+            final_content.push_str(&message.content[last_match_end..]);
         } else {
             final_content.push_str(&message.content);
         }
@@ -70,14 +63,15 @@ pub fn pretty_print_message(message: &Message) -> String {
         // So we don't print the content for the 'tool' role here, as it would be a duplicate.
         if role_text != "tool" {
             for line in final_content.lines() {
-                // Pre-colored lines (our summaries) will not be re-colored.
-                // Other user prompt lines will be cyan.
-                // \x1B is the escape character for ANSI color codes.
-                if line.starts_with('\x1B') {
-                    writeln!(&mut buffer, "{line}").unwrap();
+                // Heuristic: If a line starts with `[` and contains the unique string "lines)]",
+                // it's a summary line we generated.
+                if line.trim().starts_with('[') && line.contains("lines)]") {
+                    writeln!(&mut buffer, "{}", line.dimmed()).unwrap();
                 } else if role_text == "user" {
+                    // Any other line in a user message is part of their prompt.
                     writeln!(&mut buffer, "{}", line.cyan()).unwrap();
                 } else {
+                    // Assistant messages are printed without additional coloring.
                     writeln!(&mut buffer, "{line}").unwrap();
                 }
             }
@@ -86,30 +80,13 @@ pub fn pretty_print_message(message: &Message) -> String {
     buffer
 }
 
-/// Formats a vec of tool calls into a string with nice formatting.
-pub fn format_tool_calls_pretty(tool_calls: &[openrouter_api::models::tool::ToolCall]) -> String {
-    let mut buffer = String::new();
-    for (i, tool_call) in tool_calls.iter().enumerate() {
-        if i > 0 {
-            writeln!(&mut buffer).unwrap();
+pub fn pretty_print_json(json_string: &str) -> String {
+    match serde_json::from_str::<Value>(json_string) {
+        Ok(value) => {
+            serde_json::to_string_pretty(&value).unwrap_or_else(|_| json_string.to_string())
         }
-        let call_header = format!("Tool Call: `{}`", tool_call.function_call.name).blue();
-        writeln!(&mut buffer, "{call_header}").unwrap();
-
-        let args_str = &tool_call.function_call.arguments;
-
-        let formatted_args = match serde_json::from_str::<serde_json::Value>(args_str) {
-            Ok(json_value) => {
-                serde_json::to_string_pretty(&json_value).unwrap_or_else(|_| args_str.to_string())
-            }
-            Err(_) => args_str.to_string(),
-        };
-
-        for line in formatted_args.lines() {
-            writeln!(&mut buffer, "  {}", line.dimmed()).unwrap();
-        }
+        Err(_) => json_string.to_string(),
     }
-    buffer
 }
 
 #[cfg(test)]
@@ -205,6 +182,62 @@ mod tests {
             output.matches("lines)]").count(),
             1,
             "There should be exactly one file summary block."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_collapse_assistant_message_with_file_content() {
+        // --- Arrange ---
+        let tmp_dir = Builder::new()
+            .prefix("test-collapse-asst")
+            .tempdir()
+            .unwrap();
+        let root = tmp_dir.path();
+
+        let file1_path = root.join("test_file_assistant.txt");
+        let file1_content = "assistant line 1\nassistant line 2";
+        fs::write(&file1_path, file1_content).unwrap();
+
+        let config = Config::default();
+        let mut file_state_manager = FileStateManager::new();
+
+        // Simulate an expanded prompt in the assistant's message content
+        let expanded_content = expand_file_mentions(
+            &format!("File: @{}", file1_path.display()),
+            &config,
+            &mut file_state_manager,
+        )
+        .await
+        .unwrap();
+
+        let message = Message {
+            role: "assistant".to_string(),
+            content: expanded_content,
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+
+        // --- Act ---
+        let output = pretty_print_message(&message);
+
+        // --- Assert ---
+        let uncolored_summary_part = format!("[{} (hash:", file1_path.display());
+        assert!(
+            output.contains(&uncolored_summary_part),
+            "Output for assistant should contain summary path.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(2 lines)"),
+            "Output for assistant should contain line count.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("LID1000"),
+            "Output for assistant should not contain raw LIF content."
+        );
+        assert!(
+            !output.contains("assistant line 1"),
+            "Output for assistant should not contain raw file content."
         );
     }
 }
