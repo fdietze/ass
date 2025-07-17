@@ -50,11 +50,17 @@ pub fn execute_shell_command(command: &str, allowed_prefixes: &[String]) -> Resu
     }
 
     // --- Execution ---
-    let output = Command::new("sh").arg("-c").arg(command).output()?;
+    // --- Execution ---
+    // To interleave stdout and stderr, we redirect stderr to stdout (2>&1).
+    // This gives us a single, combined output stream, just like in a terminal.
+    let command_with_redirect = format!("{command} 2>&1");
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(command_with_redirect)
+        .output()?;
 
     // --- Output Handling ---
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let interleaved_output = String::from_utf8_lossy(&output.stdout);
     let status = output.status;
 
     let command_bold = command.bold();
@@ -64,14 +70,13 @@ pub fn execute_shell_command(command: &str, allowed_prefixes: &[String]) -> Resu
         status.to_string().red()
     };
 
-    let result = format!(
-        "> {command_bold}\n{stdout_header}{stdout}\n{stderr_header}{stderr}\n{exit_code_header}{exit_code_colored}",
-        stdout_header = "# Stdout:\n".dimmed(),
-        stdout = stdout,
-        stderr_header = "# Stderr:\n".dimmed(),
-        stderr = stderr,
-        exit_code_header = "# Exit Code: ".dimmed(),
-    );
+    let mut result = format!("> {command_bold}");
+
+    if !interleaved_output.trim().is_empty() {
+        result.push_str(&format!("\n{interleaved_output}"));
+    }
+
+    result.push_str(&format!("\n{exit_code_colored}"));
 
     Ok(result)
 }
