@@ -40,7 +40,7 @@ pub fn edit_file_tool_schema() -> Tool {
             name: "edit_file".to_string(),
             description: Some(
                 "Edits a file using a line-based patch protocol (LIF-Patch).
-IMPORTANT: The file's content (with LIDs and lif_hash) MUST be in your context before you can use this tool. If it's not, use `read_file` first.
+IMPORTANT: The file's content (with LIDs and lif_hash) MUST be in your context before you can use this tool (attached file or output of the `read_file` tool). If it's not, use `read_file` first.
 
 **Strategy**:
 - **Think in hunks**: A good patch is like a `git diff` hunk. Prefer to replace a whole logical block (like a function, `if` statement, or `for` loop) if you're making multiple changes within it. This is more robust than many small, scattered edits.
