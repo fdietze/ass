@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use colored::Colorize;
 use openrouter_api::{
     OpenRouterClient,
     types::chat::{ChatCompletionRequest, Message},
@@ -8,6 +9,7 @@ use openrouter_api::{
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
 use std::time::Duration;
+use tokio::signal;
 
 mod cli;
 mod config;
@@ -28,8 +30,12 @@ use crate::prompt_builder::expand_file_mentions;
 use crate::shell::shell_tool_schema;
 use crate::ui::pretty_print_message;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+
+fn wait_for_enter(rl: &mut DefaultEditor) -> Result<(), ReadlineError> {
+    let prompt = "\nPress Enter to continue...".dimmed().to_string();
+    rl.readline(&prompt).map(|_| ())
+}
+async fn run_app() -> Result<()> {
     let cli = cli::Cli::parse();
     let config = config::load_or_create()?;
     let mut file_state_manager = FileStateManager::new();
@@ -64,7 +70,7 @@ async fn main() -> Result<()> {
 
     println!("Model: {}", config.model);
 
-    loop {
+    'main_loop: loop {
         let final_prompt =
             expand_file_mentions(&next_prompt, &config, &mut file_state_manager).await?;
 
@@ -96,13 +102,33 @@ async fn main() -> Result<()> {
 
             messages.push(response_message.clone());
 
-            if response_message.tool_calls.is_some() {
-                let tool_messages = tool_executor::handle_tool_calls(
-                    &response_message,
-                    &config,
-                    &mut file_state_manager,
-                );
-                for tool_message in tool_messages {
+            if let Some(tool_calls) = &response_message.tool_calls {
+                for tool_call in tool_calls {
+                    let function_name = &tool_call.function_call.name;
+                    println!("\n[{}]", format!("tool: {function_name}").purple());
+                    println!("{}", tool_call.function_call.arguments);
+
+                    match wait_for_enter(&mut rl) {
+                        Ok(()) => {}
+                        Err(ReadlineError::Interrupted) => {
+                            println!("CTRL-C");
+                            break 'main_loop;
+                        }
+                        Err(ReadlineError::Eof) => {
+                            println!("CTRL-D");
+                            break 'main_loop;
+                        }
+                        Err(err) => {
+                            println!("Error: {err:?}");
+                            break 'main_loop;
+                        }
+                    }
+
+                    let tool_message = tool_executor::handle_tool_call(
+                        tool_call,
+                        &config,
+                        &mut file_state_manager,
+                    );
                     messages.push(tool_message);
                 }
             } else {
@@ -134,4 +160,16 @@ async fn main() -> Result<()> {
     println!("{messages:#?}");
 
     Ok(())
+}
+
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    tokio::select! {
+        res = run_app() => res,
+        _ = signal::ctrl_c() => {
+            println!("\nCtrl-C received, shutting down.");
+            Ok(())
+        }
+    }
 }
