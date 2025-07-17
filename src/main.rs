@@ -45,9 +45,7 @@ async fn main() -> Result<()> {
 
     let system_prompt_content =
         expand_file_mentions(&config.system_prompt, &config, &mut file_state_manager).await?;
-    let mut next_prompt = match cli.command {
-        cli::Commands::Agent { prompt } => prompt,
-    };
+    let mut next_prompt = cli.prompt;
 
     let api_key = utils::load_api_key_from_env().expect("OPENROUTER_API_KEY not set");
     let or_client = OpenRouterClient::new()

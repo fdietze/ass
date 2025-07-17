@@ -4,15 +4,7 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Cli {
-    #[command(subcommand)]
-    pub command: Commands,
+    /// The prompt for the agent
+    pub prompt: String,
 }
 
-#[derive(Parser, Debug)]
-pub enum Commands {
-    /// Run the agent with a prompt
-    Agent {
-        /// The prompt for the agent
-        prompt: String,
-    },
-}
