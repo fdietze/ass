@@ -53,6 +53,8 @@ async fn main() -> Result<()> {
         .with_timeout(Duration::from_secs(config.timeout_seconds))
         .with_api_key(api_key)?;
 
+    println!("Model: {}", config.model);
+
     let system_message = Message {
         role: "system".to_string(),
         content: system_prompt_content,
@@ -69,8 +71,6 @@ async fn main() -> Result<()> {
         file_reader::read_file_tool_schema(),
         list_files::list_files_tool_schema(),
     ];
-
-    println!("Model: {}", config.model);
 
     'main_loop: loop {
         let final_prompt =
