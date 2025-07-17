@@ -11,7 +11,6 @@ use openrouter_api::models::tool::ToolCall;
 use openrouter_api::types::chat::Message;
 use strip_ansi_escapes::strip_str;
 
-
 pub fn handle_tool_call(
     tool_call: &ToolCall,
     config: &Config,
@@ -25,9 +24,7 @@ pub fn handle_tool_call(
             let result = match serde_json::from_str::<ShellCommandArgs>(
                 &tool_call.function_call.arguments,
             ) {
-                Ok(args) => {
-                    execute_shell_command(&args.command, &config.allowed_command_prefixes)
-                }
+                Ok(args) => execute_shell_command(&args.command, &config.allowed_command_prefixes),
                 Err(e) => Err(anyhow::anyhow!(
                     "Error: Invalid arguments provided for {function_name}: {e}"
                 )),
@@ -51,18 +48,13 @@ pub fn handle_tool_call(
             }
         }
         "edit_file" => {
-            let result =
-                match serde_json::from_str::<PatchArgs>(&tool_call.function_call.arguments)
-                {
-                    Ok(args) => execute_file_patch(
-                        &args,
-                        file_state_manager,
-                        &config.editable_paths,
-                    ),
-                    Err(e) => Err(anyhow::anyhow!(
-                        "Error: Invalid arguments provided for {function_name}: {e}"
-                    )),
-                };
+            let result = match serde_json::from_str::<PatchArgs>(&tool_call.function_call.arguments)
+            {
+                Ok(args) => execute_file_patch(&args, file_state_manager, &config.editable_paths),
+                Err(e) => Err(anyhow::anyhow!(
+                    "Error: Invalid arguments provided for {function_name}: {e}"
+                )),
+            };
 
             let (colored_output, uncolored_output) = match result {
                 Ok(output) => (output.clone(), strip_str(&output)),
@@ -82,14 +74,13 @@ pub fn handle_tool_call(
             }
         }
         "read_file" => {
-            let result = match serde_json::from_str::<FileReadArgs>(
-                &tool_call.function_call.arguments,
-            ) {
-                Ok(args) => execute_read_file(&args, config, file_state_manager),
-                Err(e) => Err(anyhow::anyhow!(
-                    "Error: Invalid arguments provided for {function_name}: {e}"
-                )),
-            };
+            let result =
+                match serde_json::from_str::<FileReadArgs>(&tool_call.function_call.arguments) {
+                    Ok(args) => execute_read_file(&args, config, file_state_manager),
+                    Err(e) => Err(anyhow::anyhow!(
+                        "Error: Invalid arguments provided for {function_name}: {e}"
+                    )),
+                };
 
             let (colored_output, uncolored_output) = match result {
                 Ok(output) => (output.clone(), strip_str(&output)),
@@ -109,14 +100,13 @@ pub fn handle_tool_call(
             }
         }
         "list_files" => {
-            let result = match serde_json::from_str::<ListFilesArgs>(
-                &tool_call.function_call.arguments,
-            ) {
-                Ok(args) => execute_list_files(&args, config),
-                Err(e) => Err(anyhow::anyhow!(
-                    "Error: Invalid arguments provided for {function_name}: {e}"
-                )),
-            };
+            let result =
+                match serde_json::from_str::<ListFilesArgs>(&tool_call.function_call.arguments) {
+                    Ok(args) => execute_list_files(&args, config),
+                    Err(e) => Err(anyhow::anyhow!(
+                        "Error: Invalid arguments provided for {function_name}: {e}"
+                    )),
+                };
 
             let (colored_output, uncolored_output) = match result {
                 Ok(output) => (output.clone(), strip_str(&output)),

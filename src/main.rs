@@ -6,10 +6,8 @@ use openrouter_api::{
     types::chat::{ChatCompletionRequest, Message},
     utils,
 };
-use rustyline::DefaultEditor;
-use rustyline::error::ReadlineError;
+use std::io::{self, Write};
 use std::time::Duration;
-use tokio::signal;
 
 mod cli;
 mod config;
@@ -30,16 +28,20 @@ use crate::prompt_builder::expand_file_mentions;
 use crate::shell::shell_tool_schema;
 use crate::ui::pretty_print_message;
 
-
-fn wait_for_enter(rl: &mut DefaultEditor) -> Result<(), ReadlineError> {
+fn wait_for_enter() -> Result<()> {
     let prompt = "\nPress Enter to continue...".dimmed().to_string();
-    rl.readline(&prompt).map(|_| ())
+    print!("{prompt}");
+    io::stdout().flush()?;
+    let mut buffer = String::new();
+    io::stdin().read_line(&mut buffer)?;
+    Ok(())
 }
-async fn run_app() -> Result<()> {
+
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = cli::Cli::parse();
     let config = config::load_or_create()?;
     let mut file_state_manager = FileStateManager::new();
-    let mut rl = DefaultEditor::new()?;
 
     let system_prompt_content =
         expand_file_mentions(&config.system_prompt, &config, &mut file_state_manager).await?;
@@ -108,18 +110,10 @@ async fn run_app() -> Result<()> {
                     println!("\n[{}]", format!("tool: {function_name}").purple());
                     println!("{}", tool_call.function_call.arguments);
 
-                    match wait_for_enter(&mut rl) {
+                    match wait_for_enter() {
                         Ok(()) => {}
-                        Err(ReadlineError::Interrupted) => {
-                            println!("CTRL-C");
-                            break 'main_loop;
-                        }
-                        Err(ReadlineError::Eof) => {
-                            println!("CTRL-D");
-                            break 'main_loop;
-                        }
-                        Err(err) => {
-                            println!("Error: {err:?}");
+                        Err(e) => {
+                            println!("Error: {e:?}");
                             break 'main_loop;
                         }
                     }
@@ -137,21 +131,19 @@ async fn run_app() -> Result<()> {
             }
         }
 
-        let readline = rl.readline("user> ");
-        match readline {
-            Ok(line) => {
-                next_prompt = line;
-            }
-            Err(ReadlineError::Interrupted) => {
-                println!("CTRL-C");
+        print!("user> ");
+        io::stdout().flush()?;
+        let mut buffer = String::new();
+        match io::stdin().read_line(&mut buffer) {
+            Ok(0) => {
+                println!("\nCTRL-D");
                 break;
             }
-            Err(ReadlineError::Eof) => {
-                println!("CTRL-D");
-                break;
+            Ok(_) => {
+                next_prompt = buffer.trim().to_string();
             }
-            Err(err) => {
-                println!("Error: {err:?}");
+            Err(error) => {
+                println!("error: {error}");
                 break;
             }
         }
@@ -160,16 +152,4 @@ async fn run_app() -> Result<()> {
     println!("{messages:#?}");
 
     Ok(())
-}
-
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    tokio::select! {
-        res = run_app() => res,
-        _ = signal::ctrl_c() => {
-            println!("\nCtrl-C received, shutting down.");
-            Ok(())
-        }
-    }
 }
