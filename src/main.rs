@@ -99,52 +99,62 @@ async fn main() -> Result<()> {
                 transforms: None,
             };
 
-            let response_message =
+            let response_message_opt =
                 streaming_executor::stream_and_collect_response(&or_client, request).await?;
 
-            messages.push(response_message.clone());
+            if let Some(response_message) = response_message_opt {
+                messages.push(response_message.clone());
 
-            if let Some(tool_calls) = &response_message.tool_calls {
-                for tool_call in tool_calls {
-                    let function_name = &tool_call.function_call.name;
-                    println!("\n[{}]", format!("tool: {function_name}").purple());
-                    println!("{}", tool_call.function_call.arguments);
+                if let Some(tool_calls) = &response_message.tool_calls {
+                    for tool_call in tool_calls {
+                        let function_name = &tool_call.function_call.name;
+                        println!("\n[{}]", format!("tool: {function_name}").purple());
+                        println!("{}", tool_call.function_call.arguments);
 
-                    match wait_for_enter() {
-                        Ok(()) => {}
-                        Err(e) => {
-                            println!("Error: {e:?}");
-                            break 'main_loop;
+                        match wait_for_enter() {
+                            Ok(()) => {}
+                            Err(e) => {
+                                println!("Error: {e:?}");
+                                break 'main_loop;
+                            }
                         }
-                    }
 
-                    let tool_message = tool_executor::handle_tool_call(
-                        tool_call,
-                        &config,
-                        &mut file_state_manager,
-                    );
-                    messages.push(tool_message);
+                        let tool_message = tool_executor::handle_tool_call(
+                            tool_call,
+                            &config,
+                            &mut file_state_manager,
+                        );
+                        messages.push(tool_message);
+                    }
+                } else {
+                    // If no tool call, the LLM is giving its final answer for this turn
+                    break;
                 }
             } else {
-                // If no tool call, the LLM is giving its final answer for this turn
+                // If the response is empty, just break and prompt for user input
                 break;
             }
         }
 
-        print!("user> ");
-        io::stdout().flush()?;
-        let mut buffer = String::new();
-        match io::stdin().read_line(&mut buffer) {
-            Ok(0) => {
-                println!("\nCTRL-D");
-                break;
-            }
-            Ok(_) => {
-                next_prompt = buffer.trim().to_string();
-            }
-            Err(error) => {
-                println!("error: {error}");
-                break;
+        loop {
+            print!("user> ");
+            io::stdout().flush()?;
+            let mut buffer = String::new();
+            match io::stdin().read_line(&mut buffer) {
+                Ok(0) => {
+                    println!("\nCTRL-D");
+                    break 'main_loop;
+                }
+                Ok(_) => {
+                    next_prompt = buffer.trim().to_string();
+                    if !next_prompt.is_empty() {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    println!("error: {error}");
+                    break 'main_loop;
+                }
             }
         }
     }

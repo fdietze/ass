@@ -7,7 +7,7 @@ use std::io::{Write, stdout};
 pub async fn stream_and_collect_response(
     client: &OpenRouterClient<Ready>,
     mut request: ChatCompletionRequest,
-) -> Result<Message> {
+) -> Result<Option<Message>> {
     request.stream = Some(true);
     let mut stream = client.chat()?.chat_completion_stream(request);
 
@@ -40,7 +40,11 @@ pub async fn stream_and_collect_response(
         println!();
     }
 
-    Ok(Message {
+    if content.is_empty() && tool_calls.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(Message {
         role: "assistant".to_string(),
         content,
         tool_calls: if tool_calls.is_empty() {
@@ -50,5 +54,5 @@ pub async fn stream_and_collect_response(
         },
         name: None,
         tool_call_id: None,
-    })
+    }))
 }
