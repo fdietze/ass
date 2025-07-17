@@ -2,7 +2,7 @@ use crate::{enricher, file_state::FileStateManager, path_expander};
 use anyhow::Result;
 use colored::Colorize;
 
-pub async fn build_user_prompt(
+pub async fn expand_file_mentions(
     original_prompt: &str,
     config: &crate::config::Config,
     file_state_manager: &mut FileStateManager,

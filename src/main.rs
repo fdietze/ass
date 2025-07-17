@@ -24,7 +24,7 @@ mod tool_executor;
 mod ui;
 
 use crate::file_state::FileStateManager;
-use crate::prompt_builder::build_user_prompt;
+use crate::prompt_builder::expand_file_mentions;
 use crate::shell::shell_tool_schema;
 use crate::ui::pretty_print_message;
 
@@ -35,6 +35,8 @@ async fn main() -> Result<()> {
     let mut file_state_manager = FileStateManager::new();
     let mut rl = DefaultEditor::new()?;
 
+    let system_prompt_content =
+        expand_file_mentions(&config.system_prompt, &config, &mut file_state_manager).await?;
     let mut next_prompt = match cli.command {
         cli::Commands::Agent { prompt } => prompt,
     };
@@ -47,7 +49,7 @@ async fn main() -> Result<()> {
 
     let mut messages: Vec<Message> = vec![Message {
         role: "system".to_string(),
-        content: config.system_prompt.clone(),
+        content: system_prompt_content,
         name: None,
         tool_calls: None,
         tool_call_id: None,
@@ -64,7 +66,7 @@ async fn main() -> Result<()> {
 
     loop {
         let final_prompt =
-            build_user_prompt(&next_prompt, &config, &mut file_state_manager).await?;
+            expand_file_mentions(&next_prompt, &config, &mut file_state_manager).await?;
 
         let user_message = Message {
             role: "user".to_string(),
@@ -109,7 +111,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        let readline = rl.readline("> ");
+        let readline = rl.readline("user> ");
         match readline {
             Ok(line) => {
                 next_prompt = line;
@@ -128,6 +130,8 @@ async fn main() -> Result<()> {
             }
         }
     }
+
+    println!("{messages:#?}");
 
     Ok(())
 }

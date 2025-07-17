@@ -109,7 +109,9 @@ pub fn format_tool_calls_pretty(tool_calls: &[openrouter_api::models::tool::Tool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::Config, file_state::FileStateManager, prompt_builder::build_user_prompt};
+    use crate::{
+        config::Config, file_state::FileStateManager, prompt_builder::expand_file_mentions,
+    };
     use std::fs;
     use tempfile::Builder;
 
@@ -129,9 +131,10 @@ mod tests {
         let mut file_state_manager = FileStateManager::new();
 
         // --- Act ---
-        let expanded_prompt = build_user_prompt(&original_prompt, &config, &mut file_state_manager)
-            .await
-            .unwrap();
+        let expanded_prompt =
+            expand_file_mentions(&original_prompt, &config, &mut file_state_manager)
+                .await
+                .unwrap();
 
         let message = Message {
             role: "user".to_string(),
@@ -173,9 +176,10 @@ mod tests {
         let mut file_state_manager = FileStateManager::new();
 
         // --- Act ---
-        let expanded_prompt = build_user_prompt(&original_prompt, &config, &mut file_state_manager)
-            .await
-            .unwrap();
+        let expanded_prompt =
+            expand_file_mentions(&original_prompt, &config, &mut file_state_manager)
+                .await
+                .unwrap();
 
         let message = Message {
             role: "user".to_string(),
