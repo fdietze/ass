@@ -61,7 +61,7 @@ pub fn handle_tool_calls(
                         role: "tool".to_string(),
                         content: uncolored_output,
                         tool_call_id,
-                        name: None,
+                        name: Some(function_name.clone()),
                         tool_calls: None,
                     }
                 }
@@ -92,7 +92,7 @@ pub fn handle_tool_calls(
                         role: "tool".to_string(),
                         content: uncolored_output,
                         tool_call_id,
-                        name: None,
+                        name: Some(function_name.clone()),
                         tool_calls: None,
                     }
                 }
@@ -119,7 +119,7 @@ pub fn handle_tool_calls(
                         role: "tool".to_string(),
                         content: uncolored_output,
                         tool_call_id,
-                        name: None,
+                        name: Some(function_name.clone()),
                         tool_calls: None,
                     }
                 }
@@ -146,7 +146,7 @@ pub fn handle_tool_calls(
                         role: "tool".to_string(),
                         content: uncolored_output,
                         tool_call_id,
-                        name: None,
+                        name: Some(function_name.clone()),
                         tool_calls: None,
                     }
                 }
@@ -154,7 +154,7 @@ pub fn handle_tool_calls(
                     role: "tool".to_string(),
                     content: format!("Error: Unknown tool '{function_name}'"),
                     tool_call_id,
-                    name: None,
+                    name: Some(function_name.clone()),
                     tool_calls: None,
                 },
             };
