@@ -53,13 +53,15 @@ async fn main() -> Result<()> {
         .with_timeout(Duration::from_secs(config.timeout_seconds))
         .with_api_key(api_key)?;
 
-    let mut messages: Vec<Message> = vec![Message {
+    let system_message = Message {
         role: "system".to_string(),
         content: system_prompt_content,
         name: None,
         tool_calls: None,
         tool_call_id: None,
-    }];
+    };
+    print!("{}", pretty_print_message(&system_message));
+    let mut messages: Vec<Message> = vec![system_message.clone()];
 
     let tools = vec![
         shell_tool_schema(),
