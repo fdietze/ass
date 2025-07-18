@@ -155,35 +155,25 @@ fn generate_custom_diff(
     new_lines: &BTreeMap<u64, String>,
 ) -> String {
     let mut diff_lines = Vec::new();
-    let old_keys: BTreeSet<_> = old_lines.keys().collect();
-    let new_keys: BTreeSet<_> = new_lines.keys().collect();
+    let old_keys: BTreeSet<_> = old_lines.keys().copied().collect();
+    let new_keys: BTreeSet<_> = new_lines.keys().copied().collect();
+    let all_keys: BTreeSet<_> = old_keys.union(&new_keys).copied().collect();
 
-    for &key in old_keys.difference(&new_keys) {
-        diff_lines.push(
-            format!("- LID{}: {}", key, old_lines[key])
-                .red()
-                .to_string(),
-        );
-    }
-    for &key in new_keys.difference(&old_keys) {
-        diff_lines.push(
-            format!("+ LID{}: {}", key, new_lines[key])
-                .green()
-                .to_string(),
-        );
-    }
-    for &key in new_keys.intersection(&old_keys) {
-        if old_lines[key] != new_lines[key] {
-            diff_lines.push(
-                format!("- LID{}: {}", key, old_lines[key])
-                    .red()
-                    .to_string(),
-            );
-            diff_lines.push(
-                format!("+ LID{}: {}", key, new_lines[key])
-                    .green()
-                    .to_string(),
-            );
+    for key in all_keys {
+        match (old_lines.get(&key), new_lines.get(&key)) {
+            (Some(old_val), Some(new_val)) => {
+                if old_val != new_val {
+                    diff_lines.push(format!("- LID{key}: {old_val}").red().to_string());
+                    diff_lines.push(format!("+ LID{key}: {new_val}").green().to_string());
+                }
+            }
+            (Some(old_val), None) => {
+                diff_lines.push(format!("- LID{key}: {old_val}").red().to_string());
+            }
+            (None, Some(new_val)) => {
+                diff_lines.push(format!("+ LID{key}: {new_val}").green().to_string());
+            }
+            (None, None) => unreachable!(), // Should not happen given the construction of all_keys
         }
     }
 
@@ -342,17 +332,9 @@ impl FileState {
             line_count
         );
 
-        // This logic assumes a direct mapping from line number to LID, which is
-        // how they are created initially.
-        // let start_lid = (start_line_num as u64) * STARTING_LID_GAP;
-        // let end_lid = (end_line_num as u64) * STARTING_LID_GAP;
-
         let body = self
             .lines
             .iter()
-            // This is incorrect for files with insertions/deletions. A better way
-            // would be to use .skip() and .take() on the iterator.
-            // .filter(|&(&lid, _)| lid >= start_lid && lid <= end_lid)
             .skip(start_line_num.saturating_sub(1))
             .take(end_line_num - start_line_num + 1)
             .map(|(lid, content)| format!("LID{lid}: {content}"))
@@ -746,6 +728,40 @@ mod tests {
             state.get_full_content(),
             "line 1\ninserted after 1\nanother insertion\nreplacement"
         );
+    }
+
+    #[test]
+    fn test_generate_custom_diff() {
+        let mut old_lines = BTreeMap::new();
+        old_lines.insert(1000, "line 1".to_string());
+        old_lines.insert(2000, "line 2".to_string());
+        old_lines.insert(3000, "line 3".to_string());
+
+        // Case 1: No changes
+        let no_change_diff = generate_custom_diff(&old_lines, &old_lines);
+        assert_eq!(no_change_diff, "No changes detected.");
+
+        // Case 2: Mix of changes (add, delete, modify)
+        let mut new_lines = old_lines.clone();
+        new_lines.insert(3000, "line 3 modified".to_string()); // Modify
+        new_lines.remove(&2000); // Delete
+        new_lines.insert(4000, "line 4 added".to_string()); // Add
+
+        let diff = generate_custom_diff(&old_lines, &new_lines);
+
+        let expected_lines = [
+            format!("- LID{}: {}", 2000, "line 2").red().to_string(), // Deletion
+            format!("- LID{}: {}", 3000, "line 3").red().to_string(), // Modification (old)
+            format!("+ LID{}: {}", 3000, "line 3 modified")
+                .green()
+                .to_string(), // Modification (new)
+            format!("+ LID{}: {}", 4000, "line 4 added")
+                .green()
+                .to_string(), // Addition
+        ];
+        let expected_diff = expected_lines.join("\n");
+
+        assert_eq!(diff, expected_diff);
     }
 
     // --- Start of added tests ---
