@@ -2,6 +2,7 @@ use anyhow::Result;
 use colored::Colorize;
 use openrouter_api::models::tool::{FunctionDescription, Tool};
 use serde::{Deserialize, Serialize};
+use std::io::{self, Write};
 use std::process::Command;
 
 /// Defines the arguments structure for our shell command tool.
@@ -42,14 +43,24 @@ pub fn execute_shell_command(command: &str, allowed_prefixes: &[String]) -> Resu
         .iter()
         .any(|prefix| command.starts_with(prefix))
     {
-        let error_message = format!(
-            "Error: Command '{command}' is not allowed. Only commands starting with {allowed_prefixes:?} are permitted."
+        println!(
+            "{}",
+            format!(
+                "Warning: The command `{command}` is not in the configured whitelist: {allowed_prefixes:?}."
+            )
+            .yellow()
         );
-        // We don't need to print here, the executor will do it.
-        return Err(anyhow::anyhow!(error_message));
+        print!("Do you want to execute it anyway? (y/N) ");
+        io::stdout().flush()?;
+
+        let mut user_input = String::new();
+        io::stdin().read_line(&mut user_input)?;
+
+        if user_input.trim().to_lowercase() != "y" {
+            return Err(anyhow::anyhow!("Command execution aborted by user."));
+        }
     }
 
-    // --- Execution ---
     // --- Execution ---
     // To interleave stdout and stderr, we redirect stderr to stdout (2>&1).
     // This gives us a single, combined output stream, just like in a terminal.
