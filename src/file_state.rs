@@ -236,6 +236,18 @@ impl FileState {
                     let start_lid_num = Self::parse_lid(start_lid)?;
                     let end_lid_num = Self::parse_lid(end_lid)?;
 
+                    if !temp_lines.contains_key(&start_lid_num) {
+                        return Err(anyhow!("start_lid '{start_lid}' does not exist in file"));
+                    }
+                    if !temp_lines.contains_key(&end_lid_num) {
+                        return Err(anyhow!("end_lid '{end_lid}' does not exist in file"));
+                    }
+                    if start_lid_num > end_lid_num {
+                        return Err(anyhow!(
+                            "start_lid '{start_lid}' cannot be numerically greater than end_lid '{end_lid}'"
+                        ));
+                    }
+
                     let keys_to_remove: Vec<_> = temp_lines
                         .keys()
                         .filter(|&&k| k >= start_lid_num && k <= end_lid_num)
@@ -397,6 +409,13 @@ impl FileState {
         if after_lid_str == "_START_OF_FILE_" {
             let next_lid = lines.keys().next().copied().unwrap_or(STARTING_LID_GAP);
             let step = next_lid / (count as u64 + 1);
+
+            if step == 0 {
+                return Err(anyhow!(
+                    "Not enough space to insert at the beginning of the file before LID{next_lid}."
+                ));
+            }
+
             for i in 1..=count {
                 new_lids.push(i as u64 * step);
             }
@@ -458,6 +477,9 @@ impl FileStateManager {
         let canonical_key = canonical_path.to_string_lossy().to_string();
 
         if !self.open_files.contains_key(&canonical_key) {
+            if !canonical_path.is_file() {
+                return Err(anyhow!("Path is not a file: {}", canonical_path.display()));
+            }
             let content = fs::read_to_string(&canonical_path).unwrap_or_default();
             let file_state = FileState::new(canonical_path, &content);
             self.open_files.insert(canonical_key.clone(), file_state);
@@ -477,6 +499,22 @@ mod tests {
         let file_path = tmp_dir.path().join("test.txt");
         fs::write(&file_path, content).unwrap();
         (tmp_dir, file_path)
+    }
+
+    #[test]
+    fn test_file_state_manager_cannot_open_directory() {
+        let tmp_dir = Builder::new().prefix("test-fs-dir-").tempdir().unwrap();
+        let mut manager = FileStateManager::new();
+        let dir_path_str = tmp_dir.path().to_str().unwrap();
+
+        let result = manager.open_file(dir_path_str);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Path is not a file")
+        );
     }
 
     #[test]
@@ -767,6 +805,72 @@ mod tests {
     // --- Start of added tests ---
 
     #[test]
+    fn test_patch_replace_invalid_range_start_after_end() {
+        let content = "line 1\nline 2\nline 3";
+        let (_tmp_dir, file_path) = setup_test_file(content);
+        let mut state = FileState::new(file_path, content);
+
+        let patch = vec![PatchOperation::ReplaceRange {
+            start_lid: "LID3000".to_string(),
+            end_lid: "LID1000".to_string(),
+            content: vec!["new".to_string()],
+        }];
+
+        let result = state.apply_patch(&patch);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("cannot be numerically greater than")
+        );
+    }
+
+    #[test]
+    fn test_patch_replace_non_existent_start_lid() {
+        let content = "line 1\nline 2";
+        let (_tmp_dir, file_path) = setup_test_file(content);
+        let mut state = FileState::new(file_path, content);
+
+        let patch = vec![PatchOperation::ReplaceRange {
+            start_lid: "LID999".to_string(), // Does not exist
+            end_lid: "LID2000".to_string(),
+            content: vec!["new".to_string()],
+        }];
+
+        let result = state.apply_patch(&patch);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("start_lid 'LID999' does not exist")
+        );
+    }
+
+    #[test]
+    fn test_patch_replace_non_existent_end_lid() {
+        let content = "line 1\nline 2";
+        let (_tmp_dir, file_path) = setup_test_file(content);
+        let mut state = FileState::new(file_path, content);
+
+        let patch = vec![PatchOperation::ReplaceRange {
+            start_lid: "LID1000".to_string(),
+            end_lid: "LID9999".to_string(), // Does not exist
+            content: vec!["new".to_string()],
+        }];
+
+        let result = state.apply_patch(&patch);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("end_lid 'LID9999' does not exist")
+        );
+    }
+
+    #[test]
     fn test_error_on_lid_space_exhaustion() {
         let mut lines = BTreeMap::new();
         lines.insert(1000, "line 1".to_string());
@@ -778,6 +882,22 @@ mod tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             "Cannot insert 2 lines between LID1000 and LID1002. Not enough space."
+        );
+    }
+
+    #[test]
+    fn test_generate_new_lids_at_start_with_no_space() {
+        let mut lines = BTreeMap::new();
+        lines.insert(1, "line 1".to_string()); // A very small starting LID
+
+        // Try to insert a line at the start. The step will be 1 / (1+1) = 0.
+        let result = FileState::generate_new_lids(&lines, "_START_OF_FILE_", 1);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Not enough space to insert at the beginning")
         );
     }
 
