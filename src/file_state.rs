@@ -154,40 +154,82 @@ fn generate_custom_diff(
     old_lines: &BTreeMap<u64, String>,
     new_lines: &BTreeMap<u64, String>,
 ) -> String {
-    let mut diff_lines = Vec::new();
     let old_keys: BTreeSet<_> = old_lines.keys().copied().collect();
     let new_keys: BTreeSet<_> = new_lines.keys().copied().collect();
-    let all_keys: BTreeSet<_> = old_keys.union(&new_keys).copied().collect();
 
-    for key in all_keys {
-        match (old_lines.get(&key), new_lines.get(&key)) {
-            (Some(old_val), Some(new_val)) => {
-                if old_val != new_val {
+    let deleted_keys = &old_keys - &new_keys;
+    let added_keys = &new_keys - &old_keys;
+    let modified_keys: BTreeSet<_> = old_keys
+        .intersection(&new_keys)
+        .filter(|&k| old_lines.get(k) != new_lines.get(k))
+        .copied()
+        .collect();
+
+    let changed_keys: BTreeSet<_> = [&deleted_keys, &added_keys, &modified_keys]
+        .into_iter()
+        .flatten()
+        .copied()
+        .collect();
+
+    if changed_keys.is_empty() {
+        return "No changes detected.".to_string();
+    }
+
+    let mut diff_lines = Vec::new();
+    let all_keys: Vec<_> = old_keys.union(&new_keys).copied().collect();
+    let mut i = 0;
+    while i < all_keys.len() {
+        let key = all_keys[i];
+        if !changed_keys.contains(&key) {
+            // Unchanged line, we're not in a hunk.
+            i += 1;
+            continue;
+        }
+
+        // Start of a new hunk.
+        let mut hunk_removals = Vec::new();
+        let mut hunk_additions = Vec::new();
+        let hunk_start_index = i;
+
+        // Scan forward to find the end of the contiguous changed block.
+        while i < all_keys.len() && changed_keys.contains(&all_keys[i]) {
+            i += 1;
+        }
+        let hunk_end_index = i;
+
+        // Process all keys within this hunk.
+        for &hunk_key in all_keys.iter().take(hunk_end_index).skip(hunk_start_index) {
+            let old_val_opt = old_lines.get(&hunk_key);
+            let new_val_opt = new_lines.get(&hunk_key);
+
+            match (old_val_opt, new_val_opt) {
+                (Some(old_val), Some(new_val)) => {
+                    // Modified
                     if old_val.trim() == new_val.trim() {
-                        // Whitespace-only change. Show with a neutral prefix.
-                        // The user can see the content has been re-indented/trimmed.
-                        diff_lines.push(format!("  LID{key}: {new_val}"));
+                        hunk_additions.push(format!("  LID{hunk_key}: {new_val}"));
                     } else {
-                        diff_lines.push(format!("- LID{key}: {old_val}").red().to_string());
-                        diff_lines.push(format!("+ LID{key}: {new_val}").green().to_string());
+                        hunk_removals.push(format!("- LID{hunk_key}: {old_val}").red().to_string());
+                        hunk_additions
+                            .push(format!("+ LID{hunk_key}: {new_val}").green().to_string());
                     }
                 }
+                (Some(old_val), None) => {
+                    // Deleted
+                    hunk_removals.push(format!("- LID{hunk_key}: {old_val}").red().to_string());
+                }
+                (None, Some(new_val)) => {
+                    // Added
+                    hunk_additions.push(format!("+ LID{hunk_key}: {new_val}").green().to_string());
+                }
+                (None, None) => unreachable!(),
             }
-            (Some(old_val), None) => {
-                diff_lines.push(format!("- LID{key}: {old_val}").red().to_string());
-            }
-            (None, Some(new_val)) => {
-                diff_lines.push(format!("+ LID{key}: {new_val}").green().to_string());
-            }
-            (None, None) => unreachable!(), // Should not happen given the construction of all_keys
         }
+
+        diff_lines.extend(hunk_removals);
+        diff_lines.extend(hunk_additions);
     }
 
-    if diff_lines.is_empty() {
-        "No changes detected.".to_string()
-    } else {
-        diff_lines.join("\n")
-    }
+    diff_lines.join("\n")
 }
 
 impl FileState {
@@ -786,13 +828,15 @@ mod tests {
         assert_eq!(no_change_diff, "No changes detected.");
 
         // Case 2: Mix of changes (add, delete, modify)
-        let mut new_lines = old_lines.clone();
+        let mut new_lines = BTreeMap::new();
+        new_lines.insert(1000, "line 1".to_string()); // Unchanged, not part of hunk
         new_lines.insert(3000, "line 3 modified".to_string()); // Modify
-        new_lines.remove(&2000); // Delete
         new_lines.insert(4000, "line 4 added".to_string()); // Add
 
         let diff = generate_custom_diff(&old_lines, &new_lines);
 
+        // All changes are contiguous in the master key list, so they form one hunk.
+        // Removals first, then additions.
         let expected_lines = [
             format!("- LID{}: {}", 2000, "line 2").red().to_string(), // Deletion
             format!("- LID{}: {}", 3000, "line 3").red().to_string(), // Modification (old)
@@ -812,19 +856,67 @@ mod tests {
     fn test_generate_custom_diff_whitespace_change() {
         let mut old_lines = BTreeMap::new();
         old_lines.insert(1000, "  line 1".to_string());
-        old_lines.insert(2000, "line 2".to_string());
-        old_lines.insert(3000, "line 3".to_string());
+        old_lines.insert(2000, "line 2".to_string()); // Unchanged
 
         let mut new_lines = old_lines.clone();
         new_lines.insert(1000, "line 1".to_string()); // Whitespace change
-        new_lines.insert(3000, "line 3 changed".to_string()); // Content change
+
+        let diff = generate_custom_diff(&old_lines, &new_lines);
+
+        // The neutral line is treated as an "addition" in the hunk.
+        let expected_diff = format!("  LID{}: {}", 1000, "line 1");
+
+        assert_eq!(diff, expected_diff);
+    }
+
+    #[test]
+    fn test_generate_custom_diff_hunk_ordering() {
+        let mut old_lines = BTreeMap::new();
+        old_lines.insert(1000, "line A".to_string());
+        old_lines.insert(2000, "line B".to_string()); // To be replaced
+        old_lines.insert(3000, "line C".to_string()); // To be replaced
+        old_lines.insert(4000, "line D".to_string());
+
+        let mut new_lines = BTreeMap::new();
+        new_lines.insert(1000, "line A".to_string()); // Unchanged
+        new_lines.insert(2500, "line X".to_string()); // Replacement
+        new_lines.insert(4000, "line D".to_string()); // Unchanged
 
         let diff = generate_custom_diff(&old_lines, &new_lines);
 
         let expected_lines = [
-            format!("  LID{}: {}", 1000, "line 1"),
-            format!("- LID{}: {}", 3000, "line 3").red().to_string(),
-            format!("+ LID{}: {}", 3000, "line 3 changed")
+            format!("- LID{}: {}", 2000, "line B").red().to_string(),
+            format!("- LID{}: {}", 3000, "line C").red().to_string(),
+            format!("+ LID{}: {}", 2500, "line X").green().to_string(),
+        ];
+        let expected_diff = expected_lines.join("\n");
+
+        assert_eq!(diff, expected_diff);
+    }
+
+    #[test]
+    fn test_generate_custom_diff_multiple_hunks() {
+        let mut old_lines = BTreeMap::new();
+        old_lines.insert(1000, "hunk 1 old".to_string());
+        old_lines.insert(2000, "unchanged".to_string());
+        old_lines.insert(3000, "hunk 2 old".to_string());
+
+        let mut new_lines = BTreeMap::new();
+        new_lines.insert(1500, "hunk 1 new".to_string());
+        new_lines.insert(2000, "unchanged".to_string());
+        new_lines.insert(3500, "hunk 2 new".to_string());
+
+        let diff = generate_custom_diff(&old_lines, &new_lines);
+
+        let expected_lines = [
+            // Hunk 1
+            format!("- LID{}: {}", 1000, "hunk 1 old").red().to_string(),
+            format!("+ LID{}: {}", 1500, "hunk 1 new")
+                .green()
+                .to_string(),
+            // Hunk 2
+            format!("- LID{}: {}", 3000, "hunk 2 old").red().to_string(),
+            format!("+ LID{}: {}", 3500, "hunk 2 new")
                 .green()
                 .to_string(),
         ];
