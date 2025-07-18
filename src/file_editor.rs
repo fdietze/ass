@@ -19,10 +19,30 @@
 //! 4.  **Diff Generation**: After a patch is successfully applied, it generates a human-readable
 //!     diff of the changes, which is then returned to the LLM and displayed to the user.
 
-use crate::file_state::{FileStateManager, PatchArgs};
+use crate::file_state::{FileStateManager, PatchOperation};
 use anyhow::{Result, anyhow};
 use openrouter_api::models::tool::{FunctionDescription, Tool};
+use serde::Deserialize;
 use std::path::Path;
+
+/// Represents the arguments for a single file patch operation within a batch.
+#[derive(Deserialize, Debug)]
+pub struct PatchArgs {
+    /// The path to the file that the patch should be applied to.
+    pub file_path: String,
+    /// The hash of the file state (`lif_hash`) that the LLM is basing this patch on.
+    /// This is the key to preventing state desynchronization.
+    pub lif_hash: String,
+    /// A sequence of operations that constitute the patch.
+    pub patch: Vec<PatchOperation>,
+}
+
+/// Represents the arguments for the `edit_file` tool, which can handle multiple file edits.
+#[derive(Deserialize, Debug)]
+pub struct MultiFilePatchArgs {
+    /// A list of patch operations to be applied to one or more files.
+    pub edits: Vec<PatchArgs>,
+}
 
 /// Generates the tool schema for the `edit_file` tool.
 ///
@@ -36,7 +56,7 @@ pub fn edit_file_tool_schema() -> Tool {
         function: FunctionDescription {
             name: "edit_file".to_string(),
             description: Some(
-                "Edits a file using a line-based patch protocol (LIF-Patch).
+                "Edits files using a line-based patch protocol (LIF-Patch).
 IMPORTANT: You get the required `lif_hash` and LIDs from file attachments, `read_file` call, or the result of a previous `edit_file` call. If you just edited a file, **use the new `lif_hash` from the result of that edit** for your next operation. Only use `read_file` if the file isn't in your context or an edit failed because of a hash mismatch.
 
 **Strategy**:
@@ -44,7 +64,7 @@ IMPORTANT: You get the required `lif_hash` and LIDs from file attachments, `read
 - **Refactor in one go**: When refactoring, apply all related changes to a file in a single tool call. For example, if you rename a function and a variable inside it, do it with one `patch` array, not two separate tool calls.
 - **Avoid large, unchanged blocks**: While replacing hunks is good, don't replace hundreds of lines if only a few are changing. Find a balance.
 
-**Operations**:
+**Operations per file**:
 - **Replace/Delete**: `[\"r\", start_lid, end_lid, [\"new content\"]]`. To delete, provide an empty array for `new_content`.
 - **Insert**: `[\"i\", after_lid, [\"new content\"]]`. Use `_START_OF_FILE_` for `after_lid` to insert at the beginning.
 
@@ -52,64 +72,74 @@ IMPORTANT: You get the required `lif_hash` and LIDs from file attachments, `read
 - Line identifiers (LIDs) MUST be the strings from when the file was read (e.g., 'LID1000'). NEVER use integer line numbers.
 - The `lif_hash` MUST match the hash from when the file was last read, attached or edited.
 
-**Example of a good 'hunk' patch**:
-`{\"file_path\":\"src/main.rs\",\"lif_hash\":\"a1b2c3d4\",\"patch\":[[\"r\",\"LID5000\",\"LID9000\",[\"fn new_function_signature() -> Result<()> {\", \"    // ... new function body ...\", \"    Ok(())\", \"}\"]]]}`"
+**Example of a multi-file refactoring**:
+`{\"edits\":[{\"file_path\":\"src/main.rs\",\"lif_hash\":\"a1b2c3d4\",\"patch\":[[\"r\",\"LID5000\",\"LID5000\",[\"    new_function_name();\"]]]},{\"file_path\":\"src/lib.rs\",\"lif_hash\":\"e5f6g7h8\",\"patch\":[[\"r\",\"LID12000\",\"LID12000\",[\"pub fn new_function_name() {\"]]]}]}`"
                     .to_string(),
             ),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "The relative path to the file to be patched."
-                    },
-                    "lif_hash": {
-                        "type": "string",
-                        "description": "The 8-character SHA-1 hash of the file state that this patch applies to. Must match the hash from when the file was last read."
-                    },
-                    "patch": {
+                    "edits": {
                         "type": "array",
                         "description": "An array of patch operations, either replace/delete or insert.",
                         "items": {
-                            "oneOf": [
-                                {
-                                    "type": "array",
-                                    "description": "Replace a range of lines, like a 'diff hunk'. This is best for updating a whole function body or other logical block.",
-                                    "prefixItems": [
-                                        { "const": "r", "description": "Operation code for 'replace'." },
-                                        { "type": "string", "description": "The starting line identifier. MUST be a string like 'LID1000'. DO NOT use an integer line number." },
-                                        { "type": "string", "description": "The ending line identifier. MUST be a string like 'LID2000'. DO NOT use an integer line number. For a single line, start_lid and end_lid are the same." },
-                                        {
-                                            "type": "array",
-                                            "items": { "type": "string" },
-                                            "description": "The new lines of content to replace the specified range."
-                                        }
-                                    ],
-                                    "minItems": 4,
-                                    "maxItems": 4,
-                                    "additionalItems": false
+                            "type": "object",
+                            "properties": {
+                                "file_path": {
+                                    "type": "string",
+                                    "description": "The relative path to the file to be patched."
                                 },
-                                {
+                                "lif_hash": {
+                                    "type": "string",
+                                    "description": "The 8-character SHA-1 hash of the file state that this patch applies to. Must match the hash from when the file was last read."
+                                },
+                                "patch": {
                                     "type": "array",
-                                    "description": "Insert a new block of lines after a specific line. Use `_START_OF_FILE_` as the `after_lid` to insert at the top of the file.",
-                                    "prefixItems": [
-                                        { "const": "i", "description": "Operation code for 'insert'." },
-                                        { "type": "string", "description": "The line identifier after which to insert. MUST be a string like 'LID3000' or '_START_OF_FILE_'. DO NOT use an integer line number." },
-                                        {
-                                            "type": "array",
-                                            "items": { "type": "string" },
-                                            "description": "The new lines of content to insert."
-                                        }
-                                    ],
-                                    "minItems": 3,
-                                    "maxItems": 3,
-                                    "additionalItems": false
+                                    "description": "An array of patch operations for this specific file.",
+                                    "items": {
+                                        "oneOf": [
+                                            {
+                                                "type": "array",
+                                                "description": "Replace a range of lines, like a 'diff hunk'. This is best for updating a whole function body or other logical block.",
+                                                "prefixItems": [
+                                                    { "const": "r", "description": "Operation code for 'replace'." },
+                                                    { "type": "string", "description": "The starting line identifier. MUST be a string like 'LID1000'. DO NOT use an integer line number." },
+                                                    { "type": "string", "description": "The ending line identifier. MUST be a string like 'LID2000'. DO NOT use an integer line number. For a single line, start_lid and end_lid are the same." },
+                                                    {
+                                                        "type": "array",
+                                                        "items": { "type": "string" },
+                                                        "description": "The new lines of content to replace the specified range."
+                                                    }
+                                                ],
+                                                "minItems": 4,
+                                                "maxItems": 4,
+                                                "additionalItems": false
+                                            },
+                                            {
+                                                "type": "array",
+                                                "description": "Insert a new block of lines after a specific line. Use `_START_OF_FILE_` as the `after_lid` to insert at the top of the file.",
+                                                "prefixItems": [
+                                                    { "const": "i", "description": "Operation code for 'insert'." },
+                                                    { "type": "string", "description": "The line identifier after which to insert. MUST be a string like 'LID3000' or '_START_OF_FILE_'. DO NOT use an integer line number." },
+                                                    {
+                                                        "type": "array",
+                                                        "items": { "type": "string" },
+                                                        "description": "The new lines of content to insert."
+                                                    }
+                                                ],
+                                                "minItems": 3,
+                                                "maxItems": 3,
+                                                "additionalItems": false
+                                            }
+                                        ]
+                                    }
                                 }
-                            ]
+                            },
+                            "required": ["file_path", "lif_hash", "patch"]
                         }
                     }
                 },
-                "required": ["file_path", "lif_hash", "patch"]
+                "required": ["edits"]
             }),
         },
     }
@@ -148,32 +178,46 @@ pub fn is_path_editable(path_to_edit: &Path, editable_paths: &[String]) -> Resul
 /// 4.  Delegates the patch application, diffing, and file writing to the `FileState`.
 /// 5.  Returns the generated diff and the new short `lif_hash` to the LLM.
 pub fn execute_file_patch(
-    args: &PatchArgs,
+    args: &MultiFilePatchArgs,
     file_state_manager: &mut FileStateManager,
     editable_paths: &[String],
 ) -> Result<String> {
-    let path_to_edit = Path::new(&args.file_path);
-    is_path_editable(path_to_edit, editable_paths)?;
+    let mut results = Vec::new();
 
-    // Get the mutable FileState, perform hash check, and then apply the patch.
-    // The state is updated in place, and the file is written to disk.
-    let file_state = file_state_manager.open_file(&args.file_path)?;
-
-    if args.lif_hash != file_state.get_short_hash() {
-        return Err(anyhow!(
-            "Hash mismatch for file '{}'. Expected hash '{}' (from your last read) but current hash is '{}'. The file has changed since it was last read. Please read the file again before patching.",
-            args.file_path,
-            args.lif_hash,
-            file_state.get_short_hash()
-        ));
+    if args.edits.is_empty() {
+        return Ok("No edits provided in the tool call.".to_string());
     }
 
-    let diff = file_state.apply_and_write_patch(&args.patch)?;
-    let new_short_hash = file_state.get_short_hash().to_string();
+    for edit in &args.edits {
+        let result = (|| {
+            let path_to_edit = Path::new(&edit.file_path);
+            is_path_editable(path_to_edit, editable_paths)?;
 
-    Ok(format!(
-        "Patch applied successfully. You can perform subsequent edits using the new lif_hash: {new_short_hash}. Changes:\n{diff}"
-    ))
+            let file_state = file_state_manager.open_file(&edit.file_path)?;
+
+            if edit.lif_hash != file_state.get_short_hash() {
+                return Err(anyhow!(
+                    "Hash mismatch. Expected hash '{}' but current hash is '{}'. The file has changed. Please read it again before patching.",
+                    edit.lif_hash,
+                    file_state.get_short_hash()
+                ));
+            }
+
+            let diff = file_state.apply_and_write_patch(&edit.patch)?;
+            let new_short_hash = file_state.get_short_hash().to_string();
+
+            Ok(format!(
+                "Patch applied successfully. New lif_hash: {new_short_hash}. Changes:\n{diff}"
+            ))
+        })();
+
+        match result {
+            Ok(success_msg) => results.push(format!("File: {}\n{}", edit.file_path, success_msg)),
+            Err(e) => results.push(format!("File: {}\nError: {}", edit.file_path, e)),
+        }
+    }
+
+    Ok(results.join("\n\n---\n\n"))
 }
 
 #[cfg(test)]
@@ -191,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn test_execute_patch_successfully() {
+    fn test_execute_single_patch_successfully() {
         let (_tmp_dir, file_path) = setup_test_file("line 1\nline 3");
         let mut manager = FileStateManager::new();
         let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
@@ -199,12 +243,14 @@ mod tests {
         let initial_state = manager.open_file(&file_path).unwrap();
         let initial_short_hash = initial_state.get_short_hash().to_string();
 
-        let args = PatchArgs {
-            file_path: file_path.clone(),
-            lif_hash: initial_short_hash.clone(),
-            patch: vec![PatchOperation::Insert {
-                after_lid: "LID1000".to_string(),
-                content: vec!["line 2".to_string()],
+        let args = MultiFilePatchArgs {
+            edits: vec![PatchArgs {
+                file_path: file_path.clone(),
+                lif_hash: initial_short_hash.clone(),
+                patch: vec![PatchOperation::Insert {
+                    after_lid: "LID1000".to_string(),
+                    content: vec!["line 2".to_string()],
+                }],
             }],
         };
 
@@ -213,15 +259,15 @@ mod tests {
 
         let output = result.unwrap();
         assert!(output.contains("Patch applied successfully."));
+        assert!(output.contains(&file_path));
 
         let disk_content = fs::read_to_string(&file_path).unwrap();
         assert_eq!(disk_content, "line 1\nline 2\nline 3");
 
-        // Verify that the manager's state has the new hash and it's returned in the output
         let final_state = manager.open_file(&file_path).unwrap();
         let final_short_hash = final_state.get_short_hash();
         assert_ne!(final_short_hash, initial_short_hash);
-        assert!(output.contains(&format!("new lif_hash: {final_short_hash}")));
+        assert!(output.contains(&format!("New lif_hash: {final_short_hash}")));
     }
 
     #[test]
@@ -230,14 +276,82 @@ mod tests {
         let mut manager = FileStateManager::new();
         let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
-        let args = PatchArgs {
-            file_path: file_path.clone(),
+        let args = MultiFilePatchArgs {
+            edits: vec![PatchArgs {
+                file_path: file_path.clone(),
+                lif_hash: "wrong_hash".to_string(),
+                patch: vec![],
+            }],
+        };
+
+        let result = execute_file_patch(&args, &mut manager, &editable_paths);
+        assert!(result.is_ok()); // The function itself doesn't error, it reports errors in the string
+        let output = result.unwrap();
+        assert!(output.contains("Error: Hash mismatch"));
+        assert!(output.contains(&file_path));
+    }
+
+    #[test]
+    fn test_execute_multiple_patches_with_partial_failure() {
+        // --- Setup ---
+        let (_tmp_dir, file1_path) = setup_test_file("file1 line1");
+        let file2_path = _tmp_dir.path().join("file2.txt");
+        fs::write(&file2_path, "file2 line1").unwrap();
+        let file2_path_str = file2_path.to_str().unwrap().to_string();
+
+        let mut manager = FileStateManager::new();
+        let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+
+        let file1_initial_state = manager.open_file(&file1_path).unwrap();
+        let file1_initial_hash = file1_initial_state.get_short_hash().to_string();
+
+        let file2_initial_state = manager.open_file(&file2_path_str).unwrap();
+        let file2_initial_hash = file2_initial_state.get_short_hash().to_string();
+
+        // --- Args ---
+        // Edit for file1 is valid
+        let valid_edit = PatchArgs {
+            file_path: file1_path.clone(),
+            lif_hash: file1_initial_hash,
+            patch: vec![PatchOperation::Insert {
+                after_lid: "LID1000".to_string(),
+                content: vec!["file1 line2".to_string()],
+            }],
+        };
+        // Edit for file2 has a hash mismatch
+        let invalid_edit = PatchArgs {
+            file_path: file2_path_str.clone(),
             lif_hash: "wrong_hash".to_string(),
             patch: vec![],
         };
 
-        let result = execute_file_patch(&args, &mut manager, &editable_paths);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Hash mismatch"));
+        let args = MultiFilePatchArgs {
+            edits: vec![valid_edit, invalid_edit],
+        };
+
+        // --- Act ---
+        let result = execute_file_patch(&args, &mut manager, &editable_paths).unwrap();
+
+        // --- Assert ---
+        // Check final string report
+        assert!(result.contains(&format!("File: {file1_path}")));
+        assert!(result.contains("Patch applied successfully."));
+        assert!(result.contains(&format!("File: {file2_path_str}")));
+        assert!(result.contains("Error: Hash mismatch"));
+
+        // Check file1 on disk (should be changed)
+        let file1_content = fs::read_to_string(&file1_path).unwrap();
+        assert_eq!(file1_content, "file1 line1\nfile1 line2");
+
+        // Check file2 on disk (should NOT be changed)
+        let file2_content = fs::read_to_string(&file2_path).unwrap();
+        assert_eq!(file2_content, "file2 line1");
+
+        // Check hashes in manager
+        let file1_final_hash = manager.open_file(&file1_path).unwrap().get_short_hash();
+        assert!(result.contains(file1_final_hash));
+
+        let file2_final_hash = manager.open_file(&file2_path_str).unwrap().get_short_hash();
+        assert_eq!(file2_final_hash, file2_initial_hash); // Should be unchanged
     }
 }

@@ -40,19 +40,6 @@ use std::path::PathBuf;
 /// which is critical for the LLM's ability to reference lines reliably.
 pub const STARTING_LID_GAP: u64 = 1000;
 
-/// Represents the arguments for the `edit_file` tool, as provided by the LLM.
-/// This struct is the data contract between the LLM and the tool.
-#[derive(Deserialize, Debug)]
-pub struct PatchArgs {
-    /// The path to the file that the patch should be applied to.
-    pub file_path: String,
-    /// The hash of the file state (`lif_hash`) that the LLM is basing this patch on.
-    /// This is the key to preventing state desynchronization.
-    pub lif_hash: String,
-    /// A sequence of operations that constitute the patch.
-    pub patch: Vec<PatchOperation>,
-}
-
 /// Defines the elemental operations that can be part of a patch.
 ///
 /// ### Reasoning
@@ -399,12 +386,9 @@ impl FileState {
         let end_line_num = end_line.unwrap_or(line_count);
 
         let header = format!(
-            "File: {} | Hash: {} | Lines: {}-{}/{}",
+            "File: {} | Hash: {} | Lines: {start_line_num}-{end_line_num}/{line_count}",
             relative_path.display(),
-            short_hash,
-            start_line_num,
-            end_line_num,
-            line_count
+            short_hash
         );
 
         let body = self
@@ -444,11 +428,11 @@ impl FileState {
     /// Parses a string like "LID1234" into its numeric form `1234`.
     fn parse_lid(lid_str: &str) -> Result<u64> {
         if !lid_str.starts_with("LID") {
-            return Err(anyhow!("Invalid LID format: {}", lid_str));
+            return Err(anyhow!("Invalid LID format: {lid_str}"));
         }
         lid_str[3..]
             .parse::<u64>()
-            .map_err(|_| anyhow!("Invalid LID number: {}", lid_str))
+            .map_err(|_| anyhow!("Invalid LID number: {lid_str}"))
     }
 
     /// Calculates new LIDs for an insertion operation.
@@ -485,24 +469,21 @@ impl FileState {
         } else {
             let after_lid = Self::parse_lid(after_lid_str)?;
             if !lines.contains_key(&after_lid) {
-                return Err(anyhow!("LID not found: {}", after_lid_str));
+                return Err(anyhow!("LID not found: {after_lid_str}"));
             }
 
             let next_lid = lines
                 .range(after_lid + 1..)
                 .next()
                 .map(|(&k, _)| k)
-                .unwrap_or(after_lid + STARTING_LID_GAP);
+                .unwrap_or_else(|| after_lid + STARTING_LID_GAP);
 
             let range = next_lid - after_lid;
             let step = range / (count as u64 + 1);
 
             if step == 0 {
                 return Err(anyhow!(
-                    "Cannot insert {} lines between LID{} and LID{}. Not enough space.",
-                    count,
-                    after_lid,
-                    next_lid
+                    "Cannot insert {count} lines between LID{after_lid} and LID{next_lid}. Not enough space."
                 ));
             }
 

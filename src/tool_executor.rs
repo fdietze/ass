@@ -1,8 +1,8 @@
 use crate::{
     config::Config,
-    file_editor::execute_file_patch,
+    file_editor::{MultiFilePatchArgs, execute_file_patch},
     file_reader::{FileReadArgs, execute_read_file},
-    file_state::{FileStateManager, PatchArgs},
+    file_state::FileStateManager,
     list_files::{ListFilesArgs, execute_list_files},
     shell::{ShellCommandArgs, execute_shell_command},
 };
@@ -48,8 +48,9 @@ pub fn handle_tool_call(
             }
         }
         "edit_file" => {
-            let result = match serde_json::from_str::<PatchArgs>(&tool_call.function_call.arguments)
-            {
+            let result = match serde_json::from_str::<MultiFilePatchArgs>(
+                &tool_call.function_call.arguments,
+            ) {
                 Ok(args) => execute_file_patch(&args, file_state_manager, &config.editable_paths),
                 Err(e) => Err(anyhow::anyhow!(
                     "Error: Invalid arguments provided for {function_name}: {e}"
