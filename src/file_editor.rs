@@ -37,7 +37,7 @@ pub fn edit_file_tool_schema() -> Tool {
             name: "edit_file".to_string(),
             description: Some(
                 "Edits a file using a line-based patch protocol (LIF-Patch).
-IMPORTANT: The file's content (with LIDs and lif_hash) MUST be in your context before you can use this tool (attached file or output of the `read_file` tool). If it's not, use `read_file` first.
+IMPORTANT: You get the required `lif_hash` and LIDs from file attachments, `read_file` call, or the result of a previous `edit_file` call. If you just edited a file, **use the new `lif_hash` from the result of that edit** for your next operation. Only use `read_file` if the file isn't in your context or an edit failed because of a hash mismatch.
 
 **Strategy**:
 - **Think in hunks**: A good patch is like a `git diff` hunk. Prefer to replace a whole logical block (like a function, `if` statement, or `for` loop) if you're making multiple changes within it. This is more robust than many small, scattered edits.
@@ -50,7 +50,7 @@ IMPORTANT: The file's content (with LIDs and lif_hash) MUST be in your context b
 
 **Important**:
 - Line identifiers (LIDs) MUST be the strings from when the file was read (e.g., 'LID1000'). NEVER use integer line numbers.
-- The `lif_hash` MUST match the hash from when the file was last read.
+- The `lif_hash` MUST match the hash from when the file was last read, attached or edited.
 
 **Example of a good 'hunk' patch**:
 `{\"file_path\":\"src/main.rs\",\"lif_hash\":\"a1b2c3d4\",\"patch\":[[\"r\",\"LID5000\",\"LID9000\",[\"fn new_function_signature() -> Result<()> {\", \"    // ... new function body ...\", \"    Ok(())\", \"}\"]]]}`"
@@ -172,7 +172,7 @@ pub fn execute_file_patch(
     let new_short_hash = file_state.get_short_hash().to_string();
 
     Ok(format!(
-        "Patch applied successfully. New lif_hash: {new_short_hash}. Changes:\n{diff}"
+        "Patch applied successfully. You can perform subsequent edits using the new lif_hash: {new_short_hash}. Changes:\n{diff}"
     ))
 }
 
@@ -221,7 +221,7 @@ mod tests {
         let final_state = manager.open_file(&file_path).unwrap();
         let final_short_hash = final_state.get_short_hash();
         assert_ne!(final_short_hash, initial_short_hash);
-        assert!(output.contains(&format!("New lif_hash: {final_short_hash}")));
+        assert!(output.contains(&format!("new lif_hash: {final_short_hash}")));
     }
 
     #[test]

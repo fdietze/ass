@@ -18,7 +18,7 @@ pub fn read_file_tool_schema() -> Tool {
             description: Some(
                 "Reads a file into context for viewing or editing. Provides content, line IDs (LIDs), and a short hash.
 Example Output Format: `File: path/to/file.txt | Hash: a1b2c3d4 | Lines: 1-50/100`
-IMPORTANT: Before using, check if the file content is already in your conversation history. Do not re-read files that are already visible. Use this only for new files or if an edit failed due to a hash mismatch."
+IMPORTANT: The `edit_file` tool provides the new `lif_hash` after a successful edit. If you have this hash and the LIDs you need from the edit's diff, **you do not need to read the file again**. Only use this tool for reading a file for the first time, or if an edit fails due to a hash mismatch."
                     .to_string(),
             ),
             parameters: serde_json::json!({
