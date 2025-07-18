@@ -22,7 +22,7 @@
 //! -   **`lif_hash`**: A SHA-1 hash of the file's LIF representation, acting as a version identifier.
 
 use anyhow::{Result, anyhow};
-use colored::Colorize;
+use console::style;
 use serde::Deserialize;
 use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use sha1::{Digest, Sha1};
@@ -208,18 +208,33 @@ fn generate_custom_diff(
                     if old_val.trim() == new_val.trim() {
                         hunk_additions.push(format!("  LID{hunk_key}: {new_val}"));
                     } else {
-                        hunk_removals.push(format!("- LID{hunk_key}: {old_val}").red().to_string());
-                        hunk_additions
-                            .push(format!("+ LID{hunk_key}: {new_val}").green().to_string());
+                        hunk_removals.push(
+                            style(format!("- LID{hunk_key}: {old_val}"))
+                                .red()
+                                .to_string(),
+                        );
+                        hunk_additions.push(
+                            style(format!("+ LID{hunk_key}: {new_val}"))
+                                .green()
+                                .to_string(),
+                        );
                     }
                 }
                 (Some(old_val), None) => {
                     // Deleted
-                    hunk_removals.push(format!("- LID{hunk_key}: {old_val}").red().to_string());
+                    hunk_removals.push(
+                        style(format!("- LID{hunk_key}: {old_val}"))
+                            .red()
+                            .to_string(),
+                    );
                 }
                 (None, Some(new_val)) => {
                     // Added
-                    hunk_additions.push(format!("+ LID{hunk_key}: {new_val}").green().to_string());
+                    hunk_additions.push(
+                        style(format!("+ LID{hunk_key}: {new_val}"))
+                            .green()
+                            .to_string(),
+                    );
                 }
                 (None, None) => unreachable!(),
             }
@@ -644,7 +659,7 @@ mod tests {
         assert_eq!(state.get_full_content(), "line 1\nline 2\nline 3");
 
         // Check diff
-        assert!(diff.contains(&"+ LID1500: line 2".green().to_string()));
+        assert!(diff.contains(&style("+ LID1500: line 2".to_string()).green().to_string()));
     }
 
     #[test]
@@ -838,12 +853,16 @@ mod tests {
         // All changes are contiguous in the master key list, so they form one hunk.
         // Removals first, then additions.
         let expected_lines = [
-            format!("- LID{}: {}", 2000, "line 2").red().to_string(), // Deletion
-            format!("- LID{}: {}", 3000, "line 3").red().to_string(), // Modification (old)
-            format!("+ LID{}: {}", 3000, "line 3 modified")
+            style(format!("- LID{}: {}", 2000, "line 2"))
+                .red()
+                .to_string(), // Deletion
+            style(format!("- LID{}: {}", 3000, "line 3"))
+                .red()
+                .to_string(), // Modification (old)
+            style(format!("+ LID{}: {}", 3000, "line 3 modified"))
                 .green()
                 .to_string(), // Modification (new)
-            format!("+ LID{}: {}", 4000, "line 4 added")
+            style(format!("+ LID{}: {}", 4000, "line 4 added"))
                 .green()
                 .to_string(), // Addition
         ];
@@ -864,7 +883,7 @@ mod tests {
         let diff = generate_custom_diff(&old_lines, &new_lines);
 
         // The neutral line is treated as an "addition" in the hunk.
-        let expected_diff = format!("  LID{}: {}", 1000, "line 1");
+        let expected_diff = style(format!("  LID{}: {}", 1000, "line 1")).to_string();
 
         assert_eq!(diff, expected_diff);
     }
@@ -885,9 +904,15 @@ mod tests {
         let diff = generate_custom_diff(&old_lines, &new_lines);
 
         let expected_lines = [
-            format!("- LID{}: {}", 2000, "line B").red().to_string(),
-            format!("- LID{}: {}", 3000, "line C").red().to_string(),
-            format!("+ LID{}: {}", 2500, "line X").green().to_string(),
+            style(format!("- LID{}: {}", 2000, "line B"))
+                .red()
+                .to_string(),
+            style(format!("- LID{}: {}", 3000, "line C"))
+                .red()
+                .to_string(),
+            style(format!("+ LID{}: {}", 2500, "line X"))
+                .green()
+                .to_string(),
         ];
         let expected_diff = expected_lines.join("\n");
 
@@ -910,13 +935,17 @@ mod tests {
 
         let expected_lines = [
             // Hunk 1
-            format!("- LID{}: {}", 1000, "hunk 1 old").red().to_string(),
-            format!("+ LID{}: {}", 1500, "hunk 1 new")
+            style(format!("- LID{}: {}", 1000, "hunk 1 old"))
+                .red()
+                .to_string(),
+            style(format!("+ LID{}: {}", 1500, "hunk 1 new"))
                 .green()
                 .to_string(),
             // Hunk 2
-            format!("- LID{}: {}", 3000, "hunk 2 old").red().to_string(),
-            format!("+ LID{}: {}", 3500, "hunk 2 new")
+            style(format!("- LID{}: {}", 3000, "hunk 2 old"))
+                .red()
+                .to_string(),
+            style(format!("+ LID{}: {}", 3500, "hunk 2 new"))
                 .green()
                 .to_string(),
         ];

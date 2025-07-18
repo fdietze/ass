@@ -1,5 +1,5 @@
 use anyhow::Result;
-use colored::Colorize;
+use console::style;
 use futures::StreamExt;
 use openrouter_api::{OpenRouterClient, Ready, models::tool::ToolCall, types::chat::*};
 use std::io::{Write, stdout};
@@ -21,7 +21,7 @@ pub async fn stream_and_collect_response(
 
         if let Some(c) = choice.and_then(|c| c.delta.content.as_deref()) {
             if !header_printed {
-                print!("\n[{}]\n", "assistant".blue());
+                print!("\n[{}]\n", style("assistant").blue());
                 stdout().flush()?;
                 header_printed = true;
             }

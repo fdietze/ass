@@ -6,7 +6,7 @@ use crate::{
     list_files::{ListFilesArgs, execute_list_files},
     shell::{ShellCommandArgs, execute_shell_command},
 };
-use colored::Colorize;
+use console::style;
 use openrouter_api::models::tool::ToolCall;
 use openrouter_api::types::chat::Message;
 use strip_ansi_escapes::strip_str;
@@ -34,7 +34,7 @@ pub fn handle_tool_call(
                 Ok(output) => (output.clone(), strip_str(&output)),
                 Err(e) => {
                     let error_msg = format!("Error executing command: {e}");
-                    (error_msg.red().to_string(), error_msg)
+                    (style(error_msg.clone()).red().to_string(), error_msg)
                 }
             };
 
@@ -60,7 +60,7 @@ pub fn handle_tool_call(
                 Ok(output) => (output.clone(), strip_str(&output)),
                 Err(e) => {
                     let error_msg = format!("Error executing file patch: {e}");
-                    (error_msg.red().to_string(), error_msg)
+                    (style(error_msg.clone()).red().to_string(), error_msg)
                 }
             };
 
@@ -86,7 +86,7 @@ pub fn handle_tool_call(
                 Ok(output) => (output.clone(), strip_str(&output)),
                 Err(e) => {
                     let error_msg = format!("Error reading file: {e}");
-                    (error_msg.red().to_string(), error_msg)
+                    (style(error_msg.clone()).red().to_string(), error_msg)
                 }
             };
 
@@ -112,7 +112,7 @@ pub fn handle_tool_call(
                 Ok(output) => (output.clone(), strip_str(&output)),
                 Err(e) => {
                     let error_msg = format!("Error listing files: {e}");
-                    (error_msg.red().to_string(), error_msg)
+                    (style(error_msg.clone()).red().to_string(), error_msg)
                 }
             };
             println!("{colored_output}");

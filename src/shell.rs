@@ -1,5 +1,5 @@
 use anyhow::Result;
-use colored::Colorize;
+use console::style;
 use openrouter_api::models::tool::{FunctionDescription, Tool};
 use serde::{Deserialize, Serialize};
 use std::io::{self, Write};
@@ -45,9 +45,9 @@ pub fn execute_shell_command(command: &str, allowed_prefixes: &[String]) -> Resu
     {
         println!(
             "{}",
-            format!(
+            style(format!(
                 "Warning: The command `{command}` is not in the configured whitelist: {allowed_prefixes:?}."
-            )
+            ))
             .yellow()
         );
         print!("Do you want to execute it anyway? (y/N) ");
@@ -74,11 +74,11 @@ pub fn execute_shell_command(command: &str, allowed_prefixes: &[String]) -> Resu
     let interleaved_output = String::from_utf8_lossy(&output.stdout);
     let status = output.status;
 
-    let command_bold = command.bold();
+    let command_bold = style(command).bold();
     let exit_code_colored = if status.success() {
-        status.to_string().green()
+        style(status.to_string()).green()
     } else {
-        status.to_string().red()
+        style(status.to_string()).red()
     };
 
     let mut result = format!("> {command_bold}");

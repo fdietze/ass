@@ -1,4 +1,4 @@
-use colored::Colorize;
+use console::style;
 use fancy_regex::Regex;
 use once_cell::sync::Lazy;
 use openrouter_api::types::chat::Message;
@@ -18,7 +18,7 @@ pub fn pretty_print_message(message: &Message) -> String {
     let mut buffer = String::new();
 
     let role_text = message.role.as_str();
-    let role_colored = message.role.to_string().blue();
+    let role_colored = style(message.role.to_string()).blue();
     writeln!(&mut buffer, "\n[{role_colored}]").unwrap();
 
     if !message.content.is_empty() {
@@ -88,10 +88,10 @@ pub fn pretty_print_message(message: &Message) -> String {
                 // Heuristic: If a line starts with `[` and contains the unique string "lines)]",
                 // it's a summary line we generated.
                 if line.trim().starts_with("[File: ") && line.contains("lines]") {
-                    writeln!(&mut buffer, "{}", line.dimmed()).unwrap();
+                    writeln!(&mut buffer, "{}", style(line).dim()).unwrap();
                 } else if role_text == "user" {
                     // Any other line in a user message is part of their prompt.
-                    writeln!(&mut buffer, "{}", line.cyan()).unwrap();
+                    writeln!(&mut buffer, "{}", style(line).cyan()).unwrap();
                 } else {
                     // Assistant messages are printed without additional coloring.
                     writeln!(&mut buffer, "{line}").unwrap();

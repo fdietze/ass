@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use colored::Colorize;
+use console::{Key, Term, style};
 use openrouter_api::{
     OpenRouterClient,
     types::chat::{ChatCompletionRequest, Message},
@@ -28,13 +28,32 @@ use crate::prompt_builder::expand_file_mentions;
 use crate::shell::shell_tool_schema;
 use crate::ui::{pretty_print_json, pretty_print_message};
 
-fn wait_for_enter() -> Result<()> {
-    let prompt = "\nPress Enter to continue...".dimmed().to_string();
+pub enum UserAction {
+    Confirm,
+    Cancel,
+}
+
+fn get_user_confirmation() -> Result<UserAction> {
+    let term = Term::stdout();
+    let prompt = style("\nPress Enter to execute tool, or Esc to cancel...")
+        .dim()
+        .to_string();
     print!("{prompt}");
     io::stdout().flush()?;
-    let mut buffer = String::new();
-    io::stdin().read_line(&mut buffer)?;
-    Ok(())
+
+    loop {
+        match term.read_key()? {
+            Key::Enter => {
+                println!();
+                return Ok(UserAction::Confirm);
+            }
+            Key::Escape => {
+                println!();
+                return Ok(UserAction::Cancel);
+            }
+            _ => {} // Ignore other keys
+        }
+    }
 }
 
 #[tokio::main]
@@ -116,25 +135,34 @@ async fn main() -> Result<()> {
                 messages.push(response_message.clone());
 
                 if let Some(tool_calls) = &response_message.tool_calls {
+                    let mut user_cancelled = false;
                     for tool_call in tool_calls {
                         let function_name = &tool_call.function_call.name;
-                        println!("\n[{}]", format!("tool: {function_name}").purple());
+                        println!("\n[{}]", style(format!("tool: {function_name}")).magenta());
                         println!("{}", pretty_print_json(&tool_call.function_call.arguments));
 
-                        match wait_for_enter() {
-                            Ok(()) => {}
+                        match get_user_confirmation() {
+                            Ok(UserAction::Confirm) => {
+                                let tool_message = tool_executor::handle_tool_call(
+                                    tool_call,
+                                    &config,
+                                    &mut file_state_manager,
+                                );
+                                messages.push(tool_message);
+                            }
+                            Ok(UserAction::Cancel) => {
+                                println!("{}", style("Tool execution cancelled by user.").yellow());
+                                user_cancelled = true;
+                                break;
+                            }
                             Err(e) => {
                                 println!("Error: {e:?}");
                                 break 'main_loop;
                             }
                         }
-
-                        let tool_message = tool_executor::handle_tool_call(
-                            tool_call,
-                            &config,
-                            &mut file_state_manager,
-                        );
-                        messages.push(tool_message);
+                    }
+                    if user_cancelled {
+                        break;
                     }
                 } else {
                     // If no tool call, the LLM is giving its final answer for this turn

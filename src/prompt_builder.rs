@@ -1,6 +1,6 @@
 use crate::{enricher, file_state::FileStateManager, path_expander};
 use anyhow::Result;
-use colored::Colorize;
+use console::style;
 
 pub async fn expand_file_mentions(
     original_prompt: &str,
@@ -18,7 +18,7 @@ pub async fn expand_file_mentions(
     for not_found_path in &expansion_result.not_found {
         eprintln!(
             "{} Could not find file: {}",
-            "Warning:".yellow(),
+            style("Warning:").yellow(),
             not_found_path
         );
     }
@@ -32,7 +32,7 @@ pub async fn expand_file_mentions(
             }
             Err(e) => eprintln!(
                 "{} Failed to open file state for {}: {}",
-                "Error:".red(),
+                style("Error:").red(),
                 file_path,
                 e
             ),
