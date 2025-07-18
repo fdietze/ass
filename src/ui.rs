@@ -7,7 +7,7 @@ use std::fmt::Write;
 
 static LIF_HEADER_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r"File: (?P<path>.+?) \| Hash: (?P<hash>[a-f0-9]+) \| Lines: \d+-\d+/(?P<total_lines>\d+)",
+        r"File: (?P<path>.+?) \| Hash: (?P<hash>[a-f0-9]+) \| Lines: (?P<start>\d+)-(?P<end>\d+)/(?P<total_lines>\d+)",
     )
     .unwrap()
 });
@@ -39,18 +39,36 @@ pub fn pretty_print_message(message: &Message) -> String {
                     .unwrap();
                 let path = &caps["path"];
                 let hash = &caps["hash"];
+                let start: usize = caps["start"].parse().unwrap_or(0);
+                let end: usize = caps["end"].parse().unwrap_or(0);
                 let total_lines: usize = caps["total_lines"].parse().unwrap_or(0);
 
-                let content_start = mat.end();
-                // We find the next occurrence of the delimiter to correctly capture the body,
-                // even if the body itself contains something that looks like a delimiter.
-                let next_delimiter_pos = LIF_HEADER_REGEX
-                    .find_from_pos(&message.content, content_start)
-                    .unwrap()
-                    .map(|m| m.start())
-                    .unwrap_or(message.content.len());
+                let num_lines_in_body = if total_lines == 0 {
+                    0 // Handles empty files which have Lines: 0-0/0
+                } else {
+                    end.saturating_sub(start) + 1
+                };
 
-                let content_end = next_delimiter_pos;
+                // The body content starts after the header line's newline.
+                let body_start = if let Some(pos) = message.content[mat.end()..].find('\n') {
+                    mat.end() + pos + 1
+                } else {
+                    message.content.len()
+                };
+
+                let content_end = if num_lines_in_body == 0 {
+                    // For empty files or files with only a header, the "content" ends right after the header's newline.
+                    body_start
+                } else {
+                    // Find the end of the body by finding the newline of the last line.
+                    // This is more robust than scanning for the next header, which caused issues with
+                    // multiple files being concatenated and trailing prompt text being swallowed.
+                    message.content[body_start..]
+                        .match_indices('\n')
+                        .nth(num_lines_in_body - 1)
+                        .map(|(i, _)| body_start + i) // The end is the position of the newline
+                        .unwrap_or(message.content.len())
+                };
 
                 let summary = format!("[File: {path} | Hash: {hash} | {total_lines} lines]");
                 final_content.push_str(&summary);
@@ -243,5 +261,73 @@ mod tests {
             !output.contains("assistant line 1"),
             "Output for assistant should not contain raw file content."
         );
+    }
+
+    #[tokio::test]
+    async fn test_collapse_multiple_files_and_preserve_trailing_text() {
+        // --- Arrange ---
+        let tmp_dir = Builder::new()
+            .prefix("test-multi-collapse")
+            .tempdir()
+            .unwrap();
+        let root = tmp_dir.path();
+
+        let file1_path = root.join("file1.txt");
+        fs::write(&file1_path, "line a\nline b").unwrap();
+
+        let file2_path = root.join("file2.txt");
+        fs::write(&file2_path, "line x\nline y").unwrap();
+
+        let config = Config::default();
+        let original_prompt = format!(
+            "Check @{} and @{}. This text should be preserved",
+            file1_path.display(),
+            file2_path.display()
+        );
+
+        let mut file_state_manager = FileStateManager::new();
+
+        // --- Act ---
+        let expanded_prompt =
+            expand_file_mentions(&original_prompt, &config, &mut file_state_manager)
+                .await
+                .unwrap();
+
+        let message = Message {
+            role: "user".to_string(),
+            content: expanded_prompt,
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+
+        let output = pretty_print_message(&message);
+
+        // --- Assert ---
+        // 1. Check that both file summaries are present
+        let file1_summary = format!("[File: {} |", file1_path.display());
+        let file2_summary = format!("[File: {} |", file2_path.display());
+        assert!(output.contains(&file1_summary));
+        assert!(output.contains(&file2_summary));
+
+        // 2. Check that the original prompt text (that appears before the attachments) is preserved
+        assert!(output.contains("This text should be preserved"));
+
+        // 3. Check that the summaries are on separate lines, which is the core of the bug fix.
+        // The pretty_print_message function splits the processed content by lines to format it.
+        // If the summaries were concatenated, this count would be 1.
+        let summary_lines_count = output
+            .lines()
+            .filter(|line| line.contains("[File:") && line.contains("lines]"))
+            .count();
+        assert_eq!(
+            summary_lines_count, 2,
+            "Should find two separate summary lines for the two files."
+        );
+
+        // 4. Ensure original file content is gone
+        assert!(!output.contains("LID1000"));
+        assert!(!output.contains("line a"));
+        assert!(!output.contains("line x"));
     }
 }

@@ -6,14 +6,19 @@ pub struct MessageEnrichments {
     pub mentioned_files: Vec<String>,
 }
 
-static AT_MENTION_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?<!\w)@([\w/\.\-]+)").expect("Invalid regex"));
+// This regex uses a negative lookbehind `(?<!\w)` to ensure the '@' is not preceded by a word character,
+// which is the common case for email addresses.
+// It then captures a file path that must end on a non-dot character, or it can be a single dot.
+// This prevents the capture of trailing dots from sentence punctuation.
+static AT_MENTION_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?<!\w)@((?:[\w/.-]*[\w/-])|\.)").expect("Invalid regex for @-mentions")
+});
 
 pub fn extract_enrichments(content: &str) -> MessageEnrichments {
     let mentioned_files = AT_MENTION_REGEX
         .captures_iter(content)
         .filter_map(Result::ok)
-        .map(|cap| cap[1].to_string())
+        .map(|cap| cap.get(1).unwrap().as_str().to_string())
         .collect();
 
     MessageEnrichments { mentioned_files }

@@ -7,4 +7,3 @@ pub struct Cli {
     /// The prompt for the agent
     pub prompt: String,
 }
-
