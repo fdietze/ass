@@ -163,8 +163,14 @@ fn generate_custom_diff(
         match (old_lines.get(&key), new_lines.get(&key)) {
             (Some(old_val), Some(new_val)) => {
                 if old_val != new_val {
-                    diff_lines.push(format!("- LID{key}: {old_val}").red().to_string());
-                    diff_lines.push(format!("+ LID{key}: {new_val}").green().to_string());
+                    if old_val.trim() == new_val.trim() {
+                        // Whitespace-only change. Show with a neutral prefix.
+                        // The user can see the content has been re-indented/trimmed.
+                        diff_lines.push(format!("  LID{key}: {new_val}"));
+                    } else {
+                        diff_lines.push(format!("- LID{key}: {old_val}").red().to_string());
+                        diff_lines.push(format!("+ LID{key}: {new_val}").green().to_string());
+                    }
                 }
             }
             (Some(old_val), None) => {
@@ -796,6 +802,31 @@ mod tests {
             format!("+ LID{}: {}", 4000, "line 4 added")
                 .green()
                 .to_string(), // Addition
+        ];
+        let expected_diff = expected_lines.join("\n");
+
+        assert_eq!(diff, expected_diff);
+    }
+
+    #[test]
+    fn test_generate_custom_diff_whitespace_change() {
+        let mut old_lines = BTreeMap::new();
+        old_lines.insert(1000, "  line 1".to_string());
+        old_lines.insert(2000, "line 2".to_string());
+        old_lines.insert(3000, "line 3".to_string());
+
+        let mut new_lines = old_lines.clone();
+        new_lines.insert(1000, "line 1".to_string()); // Whitespace change
+        new_lines.insert(3000, "line 3 changed".to_string()); // Content change
+
+        let diff = generate_custom_diff(&old_lines, &new_lines);
+
+        let expected_lines = [
+            format!("  LID{}: {}", 1000, "line 1"),
+            format!("- LID{}: {}", 3000, "line 3").red().to_string(),
+            format!("+ LID{}: {}", 3000, "line 3 changed")
+                .green()
+                .to_string(),
         ];
         let expected_diff = expected_lines.join("\n");
 
