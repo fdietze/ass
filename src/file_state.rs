@@ -22,10 +22,11 @@
 //! -   **`lif_hash`**: A SHA-1 hash of the file's LIF representation, acting as a version identifier.
 
 use anyhow::{Result, anyhow};
+use colored::Colorize;
 use serde::Deserialize;
 use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use sha1::{Digest, Sha1};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::fs;
 use std::path::PathBuf;
@@ -148,6 +149,51 @@ pub struct FileState {
     pub lif_hash: String,
 }
 
+/// Generates a colorized, human-readable diff between the old and new file states.
+fn generate_custom_diff(
+    old_lines: &BTreeMap<u64, String>,
+    new_lines: &BTreeMap<u64, String>,
+) -> String {
+    let mut diff_lines = Vec::new();
+    let old_keys: BTreeSet<_> = old_lines.keys().collect();
+    let new_keys: BTreeSet<_> = new_lines.keys().collect();
+
+    for &key in old_keys.difference(&new_keys) {
+        diff_lines.push(
+            format!("- LID{}: {}", key, old_lines[key])
+                .red()
+                .to_string(),
+        );
+    }
+    for &key in new_keys.difference(&old_keys) {
+        diff_lines.push(
+            format!("+ LID{}: {}", key, new_lines[key])
+                .green()
+                .to_string(),
+        );
+    }
+    for &key in new_keys.intersection(&old_keys) {
+        if old_lines[key] != new_lines[key] {
+            diff_lines.push(
+                format!("- LID{}: {}", key, old_lines[key])
+                    .red()
+                    .to_string(),
+            );
+            diff_lines.push(
+                format!("+ LID{}: {}", key, new_lines[key])
+                    .green()
+                    .to_string(),
+            );
+        }
+    }
+
+    if diff_lines.is_empty() {
+        "No changes detected.".to_string()
+    } else {
+        diff_lines.join("\n")
+    }
+}
+
 impl FileState {
     /// Creates a new `FileState` from a file path and its raw string content.
     /// This function generates the initial LIDs and computes the first hash.
@@ -233,6 +279,19 @@ impl FileState {
         Ok(())
     }
 
+    /// Applies the patch, writes the changes to disk, and returns a diff.
+    pub fn apply_and_write_patch(&mut self, patch: &[PatchOperation]) -> Result<String> {
+        let old_lines = self.lines.clone();
+        self.apply_patch(patch)?; // This updates self.lines and self.lif_hash
+
+        let diff = generate_custom_diff(&old_lines, &self.lines);
+        let final_content = self.get_full_content();
+
+        fs::write(&self.path, &final_content)?;
+
+        Ok(diff)
+    }
+
     /// Reconstructs the full file content by joining the lines, without any LIF metadata.
     /// This is used to write the final content back to disk.
     pub fn get_full_content(&self) -> String {
@@ -258,11 +317,15 @@ impl FileState {
         start_line: Option<usize>,
         end_line: Option<usize>,
     ) -> String {
+        let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let relative_path = self.path.strip_prefix(&project_root).unwrap_or(&self.path);
+        let short_hash = self.get_short_hash();
+
         if self.lines.is_empty() {
             return format!(
-                "---FILE: {} (lif-hash: {}) (lines 0-0 of 0)---\n[File is empty]",
-                self.path.display(),
-                self.lif_hash,
+                "File: {} | Hash: {} | Lines: 0-0/0\n[File is empty]",
+                relative_path.display(),
+                short_hash,
             );
         }
 
@@ -271,9 +334,9 @@ impl FileState {
         let end_line_num = end_line.unwrap_or(line_count);
 
         let header = format!(
-            "---FILE: {} (lif-hash: {}) (lines {}-{} of {})---\n",
-            self.path.display(),
-            self.lif_hash,
+            "File: {} | Hash: {} | Lines: {}-{}/{}",
+            relative_path.display(),
+            short_hash,
             start_line_num,
             end_line_num,
             line_count
@@ -281,18 +344,22 @@ impl FileState {
 
         // This logic assumes a direct mapping from line number to LID, which is
         // how they are created initially.
-        let start_lid = (start_line_num as u64) * STARTING_LID_GAP;
-        let end_lid = (end_line_num as u64) * STARTING_LID_GAP;
+        // let start_lid = (start_line_num as u64) * STARTING_LID_GAP;
+        // let end_lid = (end_line_num as u64) * STARTING_LID_GAP;
 
         let body = self
             .lines
             .iter()
-            .filter(|&(&lid, _)| lid >= start_lid && lid <= end_lid)
+            // This is incorrect for files with insertions/deletions. A better way
+            // would be to use .skip() and .take() on the iterator.
+            // .filter(|&(&lid, _)| lid >= start_lid && lid <= end_lid)
+            .skip(start_line_num.saturating_sub(1))
+            .take(end_line_num - start_line_num + 1)
             .map(|(lid, content)| format!("LID{lid}: {content}"))
             .collect::<Vec<String>>()
             .join("\n");
 
-        format!("{header}{body}")
+        format!("{header}\n{body}")
     }
 
     /// A simple helper to compute the SHA-1 hash of a string.
@@ -300,6 +367,11 @@ impl FileState {
         let mut hasher = Sha1::new();
         hasher.update(content.as_bytes());
         format!("{:x}", hasher.finalize())
+    }
+
+    /// Returns the truncated 8-character version of the LIF hash.
+    pub fn get_short_hash(&self) -> &str {
+        &self.lif_hash[..8.min(self.lif_hash.len())]
     }
 
     /// Generates the canonical string content that is used for hashing.
@@ -445,13 +517,20 @@ mod tests {
         let state = FileState::new(file_path.clone(), "line 1\nline 2");
         let representation = state.get_lif_representation();
 
+        let project_root = std::env::current_dir().unwrap();
+        let relative_path = file_path.strip_prefix(&project_root).unwrap_or(&file_path);
+        let short_hash = state.get_short_hash();
+
         let expected_header = format!(
-            "---FILE: {} (lif-hash: {}) (lines 1-2 of 2)---\n",
-            file_path.display(),
-            state.lif_hash
+            "File: {} | Hash: {} | Lines: 1-2/2",
+            relative_path.display(),
+            short_hash
         );
         let expected_body = "LID1000: line 1\nLID2000: line 2";
-        assert_eq!(representation, format!("{expected_header}{expected_body}"));
+        assert_eq!(
+            representation,
+            format!("{expected_header}\n{expected_body}")
+        );
     }
 
     #[test]
@@ -460,16 +539,44 @@ mod tests {
         let state = FileState::new(file_path.clone(), "1\n2\n3\n4\n5");
 
         let partial_representation = state.get_lif_string_for_range(Some(2), Some(4));
+
+        let project_root = std::env::current_dir().unwrap();
+        let relative_path = file_path.strip_prefix(&project_root).unwrap_or(&file_path);
+        let short_hash = state.get_short_hash();
+
         let expected_header = format!(
-            "---FILE: {} (lif-hash: {}) (lines 2-4 of 5)---\n",
-            file_path.display(),
-            state.lif_hash
+            "File: {} | Hash: {} | Lines: 2-4/5",
+            relative_path.display(),
+            short_hash
         );
         let expected_body = "LID2000: 2\nLID3000: 3\nLID4000: 4";
         assert_eq!(
             partial_representation,
-            format!("{expected_header}{expected_body}")
+            format!("{expected_header}\n{expected_body}")
         );
+    }
+
+    #[test]
+    fn test_apply_and_write_patch() {
+        let (_tmp_dir, file_path) = setup_test_file("line 1\nline 3");
+        let mut state = FileState::new(file_path.clone(), "line 1\nline 3");
+
+        let patch = vec![PatchOperation::Insert {
+            after_lid: "LID1000".to_string(),
+            content: vec!["line 2".to_string()],
+        }];
+
+        let diff = state.apply_and_write_patch(&patch).unwrap();
+
+        // Check file on disk
+        let disk_content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(disk_content, "line 1\nline 2\nline 3");
+
+        // Check in-memory state
+        assert_eq!(state.get_full_content(), "line 1\nline 2\nline 3");
+
+        // Check diff
+        assert!(diff.contains(&"+ LID1500: line 2".green().to_string()));
     }
 
     #[test]

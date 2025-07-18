@@ -21,10 +21,7 @@
 
 use crate::file_state::{FileStateManager, PatchArgs};
 use anyhow::{Result, anyhow};
-use colored::Colorize;
 use openrouter_api::models::tool::{FunctionDescription, Tool};
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use std::path::Path;
 
 /// Generates the tool schema for the `edit_file` tool.
@@ -56,7 +53,7 @@ IMPORTANT: The file's content (with LIDs and lif_hash) MUST be in your context b
 - The `lif_hash` MUST match the hash from when the file was last read.
 
 **Example of a good 'hunk' patch**:
-`{\"file_path\":\"src/main.rs\",\"lif_hash\":\"a1b2c3d4...\",\"patch\":[[\"r\",\"LID5000\",\"LID9000\",[\"fn new_function_signature() -> Result<()> {\", \"    // ... new function body ...\", \"    Ok(())\", \"}\"]]]}`"
+`{\"file_path\":\"src/main.rs\",\"lif_hash\":\"a1b2c3d4\",\"patch\":[[\"r\",\"LID5000\",\"LID9000\",[\"fn new_function_signature() -> Result<()> {\", \"    // ... new function body ...\", \"    Ok(())\", \"}\"]]]}`"
                     .to_string(),
             ),
             parameters: serde_json::json!({
@@ -68,7 +65,7 @@ IMPORTANT: The file's content (with LIDs and lif_hash) MUST be in your context b
                     },
                     "lif_hash": {
                         "type": "string",
-                        "description": "The SHA-1 hash of the file state that this patch applies to. Must match the hash from when the file was last read."
+                        "description": "The 8-character SHA-1 hash of the file state that this patch applies to. Must match the hash from when the file was last read."
                     },
                     "patch": {
                         "type": "array",
@@ -142,67 +139,14 @@ pub fn is_path_editable(path_to_edit: &Path, editable_paths: &[String]) -> Resul
     Ok(())
 }
 
-/// Generates a colorized, human-readable diff between the old and new file states.
-///
-/// ### Reasoning
-/// Providing a clear diff as the tool's output serves two purposes:
-/// 1.  **User Feedback**: It shows the user exactly what changes the agent made.
-/// 2.  **LLM Confirmation**: It gives the LLM a confirmation of the result of its action,
-///     allowing it to verify if the edit was successful or if it needs to try again.
-fn generate_custom_diff(
-    old_lines: &BTreeMap<u64, String>,
-    new_lines: &BTreeMap<u64, String>,
-) -> String {
-    let mut diff_lines = Vec::new();
-    let old_keys: BTreeSet<_> = old_lines.keys().collect();
-    let new_keys: BTreeSet<_> = new_lines.keys().collect();
-
-    for &key in old_keys.difference(&new_keys) {
-        diff_lines.push(
-            format!("- LID{}: {}", key, old_lines[key])
-                .red()
-                .to_string(),
-        );
-    }
-    for &key in new_keys.difference(&old_keys) {
-        diff_lines.push(
-            format!("+ LID{}: {}", key, new_lines[key])
-                .green()
-                .to_string(),
-        );
-    }
-    for &key in new_keys.intersection(&old_keys) {
-        if old_lines[key] != new_lines[key] {
-            diff_lines.push(
-                format!("- LID{}: {}", key, old_lines[key])
-                    .red()
-                    .to_string(),
-            );
-            diff_lines.push(
-                format!("+ LID{}: {}", key, new_lines[key])
-                    .green()
-                    .to_string(),
-            );
-        }
-    }
-
-    if diff_lines.is_empty() {
-        "No changes detected.".to_string()
-    } else {
-        diff_lines.join("\n")
-    }
-}
-
 /// The main execution function for the `edit_file` tool.
 ///
 /// This function orchestrates the entire patch process:
 /// 1.  Validates the file path is editable.
 /// 2.  Retrieves the current `FileState` from the `FileStateManager`.
 /// 3.  Performs the critical hash check to ensure state consistency.
-/// 4.  Applies the patch to the `FileState`.
-/// 5.  Generates a diff of the changes.
-/// 6.  Writes the new file content to disk.
-/// 7.  Returns the generated diff and the new `lif_hash` to the LLM.
+/// 4.  Delegates the patch application, diffing, and file writing to the `FileState`.
+/// 5.  Returns the generated diff and the new short `lif_hash` to the LLM.
 pub fn execute_file_patch(
     args: &PatchArgs,
     file_state_manager: &mut FileStateManager,
@@ -211,30 +155,24 @@ pub fn execute_file_patch(
     let path_to_edit = Path::new(&args.file_path);
     is_path_editable(path_to_edit, editable_paths)?;
 
-    let (diff, final_content, new_hash) = {
-        let file_state = file_state_manager.open_file(&args.file_path)?;
+    // Get the mutable FileState, perform hash check, and then apply the patch.
+    // The state is updated in place, and the file is written to disk.
+    let file_state = file_state_manager.open_file(&args.file_path)?;
 
-        if args.lif_hash != file_state.lif_hash {
-            return Err(anyhow!(
-                "Hash mismatch for file '{}'. The file has changed since it was last read. Please read the file again before patching.",
-                args.file_path
-            ));
-        }
+    if args.lif_hash != file_state.get_short_hash() {
+        return Err(anyhow!(
+            "Hash mismatch for file '{}'. Expected hash '{}' (from your last read) but current hash is '{}'. The file has changed since it was last read. Please read the file again before patching.",
+            args.file_path,
+            args.lif_hash,
+            file_state.get_short_hash()
+        ));
+    }
 
-        let old_lines = file_state.lines.clone();
-        file_state.apply_patch(&args.patch)?;
-        let diff = generate_custom_diff(&old_lines, &file_state.lines);
-        let final_content = file_state.get_full_content();
-        let new_hash = file_state.lif_hash.clone();
-        (diff, final_content, new_hash)
-    };
-
-    // The file_state is out of scope now, releasing the mutable borrow on file_state_manager.
-    // We write the changes to disk. The in-memory state in the manager is already updated.
-    std::fs::write(path_to_edit, &final_content)?;
+    let diff = file_state.apply_and_write_patch(&args.patch)?;
+    let new_short_hash = file_state.get_short_hash().to_string();
 
     Ok(format!(
-        "Patch applied successfully. New lif_hash: {new_hash}. Changes:\n{diff}"
+        "Patch applied successfully. New lif_hash: {new_short_hash}. Changes:\n{diff}"
     ))
 }
 
@@ -259,11 +197,11 @@ mod tests {
         let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
         let initial_state = manager.open_file(&file_path).unwrap();
-        let initial_hash = initial_state.lif_hash.clone();
+        let initial_short_hash = initial_state.get_short_hash().to_string();
 
         let args = PatchArgs {
             file_path: file_path.clone(),
-            lif_hash: initial_hash.clone(),
+            lif_hash: initial_short_hash.clone(),
             patch: vec![PatchOperation::Insert {
                 after_lid: "LID1000".to_string(),
                 content: vec!["line 2".to_string()],
@@ -275,16 +213,15 @@ mod tests {
 
         let output = result.unwrap();
         assert!(output.contains("Patch applied successfully."));
-        assert!(output.contains("New lif_hash:"));
-        assert!(output.contains(&"+ LID1500: line 2".green().to_string()));
 
         let disk_content = fs::read_to_string(&file_path).unwrap();
         assert_eq!(disk_content, "line 1\nline 2\nline 3");
 
         // Verify that the manager's state has the new hash and it's returned in the output
         let final_state = manager.open_file(&file_path).unwrap();
-        assert_ne!(final_state.lif_hash, initial_hash);
-        assert!(output.contains(&final_state.lif_hash));
+        let final_short_hash = final_state.get_short_hash();
+        assert_ne!(final_short_hash, initial_short_hash);
+        assert!(output.contains(&format!("New lif_hash: {final_short_hash}")));
     }
 
     #[test]

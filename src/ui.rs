@@ -6,7 +6,10 @@ use serde_json::Value;
 use std::fmt::Write;
 
 static LIF_HEADER_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"---FILE: (?P<path>.+?) \(lif-hash: (?P<hash>[a-f0-9]+)\) \(lines \d+-\d+ of (?P<total_lines>\d+)\)---").unwrap()
+    Regex::new(
+        r"File: (?P<path>.+?) \| Hash: (?P<hash>[a-f0-9]+) \| Lines: \d+-\d+/(?P<total_lines>\d+)",
+    )
+    .unwrap()
 });
 
 /// Formats a message into a string with nice formatting.
@@ -19,7 +22,8 @@ pub fn pretty_print_message(message: &Message) -> String {
     writeln!(&mut buffer, "\n[{role_colored}]").unwrap();
 
     if !message.content.is_empty() {
-        let should_collapse = role_text == "user" || role_text == "system";
+        let should_collapse =
+            role_text == "user" || role_text == "system" || role_text == "assistant";
         let mut final_content = String::new();
 
         if should_collapse {
@@ -48,7 +52,7 @@ pub fn pretty_print_message(message: &Message) -> String {
 
                 let content_end = next_delimiter_pos;
 
-                let summary = format!("[{} (hash: {}) ({} lines)]", path, &hash[..8], total_lines);
+                let summary = format!("[File: {path} | Hash: {hash} | {total_lines} lines]");
                 final_content.push_str(&summary);
 
                 last_match_end = content_end;
@@ -65,7 +69,7 @@ pub fn pretty_print_message(message: &Message) -> String {
             for line in final_content.lines() {
                 // Heuristic: If a line starts with `[` and contains the unique string "lines)]",
                 // it's a summary line we generated.
-                if line.trim().starts_with('[') && line.contains("lines)]") {
+                if line.trim().starts_with("[File: ") && line.contains("lines]") {
                     writeln!(&mut buffer, "{}", line.dimmed()).unwrap();
                 } else if role_text == "user" {
                     // Any other line in a user message is part of their prompt.
@@ -130,13 +134,13 @@ mod tests {
         let output = pretty_print_message(&message);
 
         // --- Assert ---
-        let uncolored_summary_part = format!("[{} (hash:", file1_path.display());
+        let uncolored_summary_part = format!("[File: {} | Hash:", file1_path.display());
         assert!(
             output.contains(&uncolored_summary_part),
             "Output should contain the summary path.\nOutput was:\n---\n{output}\n---"
         );
         assert!(
-            output.contains("(3 lines)"),
+            output.contains("| 3 lines]"),
             "Output should contain the line count.\nOutput was:\n---\n{output}\n---"
         );
         assert!(
@@ -150,7 +154,7 @@ mod tests {
         // --- Arrange ---
         let tmp_dir = Builder::new().prefix("test-delimiter-").tempdir().unwrap();
         let file_path = tmp_dir.path().join("file_with_delimiter.rs");
-        let file_content = "line 1\nconst FAKE_HEADER: &str = \"---FILE: fake/path.rs (lines 1-1 of 1)---\";\nline 3";
+        let file_content = "line 1\nconst FAKE_HEADER: &str = \"File: fake/path.rs | Hash: fakehash | Lines: 1-1/1\";\nline 3";
         fs::write(&file_path, file_content).unwrap();
 
         let config = Config::default();
@@ -175,11 +179,11 @@ mod tests {
 
         // --- Assert ---
         assert!(
-            output.contains("(3 lines)"),
+            output.contains("| 3 lines]"),
             "Summary should count all 3 lines, not be truncated by the fake delimiter."
         );
         assert_eq!(
-            output.matches("lines)]").count(),
+            output.matches("lines]").count(),
             1,
             "There should be exactly one file summary block."
         );
@@ -222,13 +226,13 @@ mod tests {
         let output = pretty_print_message(&message);
 
         // --- Assert ---
-        let uncolored_summary_part = format!("[{} (hash:", file1_path.display());
+        let uncolored_summary_part = format!("[File: {} | Hash:", file1_path.display());
         assert!(
             output.contains(&uncolored_summary_part),
             "Output for assistant should contain summary path.\nOutput:\n{output}"
         );
         assert!(
-            output.contains("(2 lines)"),
+            output.contains("| 2 lines]"),
             "Output for assistant should contain line count.\nOutput:\n{output}"
         );
         assert!(

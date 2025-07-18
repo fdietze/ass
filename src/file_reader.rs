@@ -16,8 +16,9 @@ pub fn read_file_tool_schema() -> Tool {
         function: FunctionDescription {
             name: "read_file".to_string(),
             description: Some(
-                "Reads a file into context for viewing or editing. Provides content, line IDs (LIDs), and a hash.
-IMPORTANT: Before using, check if the file content is already in your conversation history, like attached file contents. Do not re-read files that are already visible. Use this only for new files or if an edit failed due to a hash mismatch."
+                "Reads a file into context for viewing or editing. Provides content, line IDs (LIDs), and a short hash.
+Example Output Format: `File: path/to/file.txt | Hash: a1b2c3d4 | Lines: 1-50/100`
+IMPORTANT: Before using, check if the file content is already in your conversation history. Do not re-read files that are already visible. Use this only for new files or if an edit failed due to a hash mismatch."
                     .to_string(),
             ),
             parameters: serde_json::json!({
@@ -88,10 +89,10 @@ mod tests {
         let result = execute_read_file(&args, &config, &mut file_state_manager).unwrap();
 
         let file_state = file_state_manager.open_file(&file_path).unwrap();
-        let expected_hash = file_state.lif_hash.clone();
+        let short_hash = &file_state.lif_hash[..8];
 
-        assert!(result.contains(&format!("(lif-hash: {expected_hash})")));
-        assert!(result.contains("(lines 1-3 of 3)"));
+        assert!(result.contains(&format!("Hash: {short_hash}")));
+        assert!(result.contains("Lines: 1-3/3"));
         assert!(result.contains("LID1000: line 1"));
         assert!(result.contains("LID2000: line 2"));
         assert!(result.contains("LID3000: line 3"));
@@ -112,7 +113,7 @@ mod tests {
         let mut file_state_manager = FileStateManager::new();
 
         let result = execute_read_file(&args, &config, &mut file_state_manager).unwrap();
-        assert!(result.contains("lines 2-4 of 5"));
+        assert!(result.contains("Lines: 2-4/5"));
         assert!(!result.contains("LID1000: 1"));
         assert!(result.contains("LID2000: 2"));
         assert!(result.contains("LID3000: 3"));
@@ -135,7 +136,8 @@ mod tests {
         let mut file_state_manager = FileStateManager::new();
 
         let result = execute_read_file(&args, &config, &mut file_state_manager).unwrap();
-        assert!(result.contains("is empty"));
+        assert!(result.contains("[File is empty]"));
+        assert!(result.contains("Lines: 0-0/0"));
     }
 
     // Omitted other tests like truncation, out_of_bounds, etc. for brevity
