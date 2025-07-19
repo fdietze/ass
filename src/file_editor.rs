@@ -19,9 +19,7 @@
 //! 4.  **Diff Generation**: After a patch is successfully applied, it generates a human-readable
 //!     diff of the changes, which is then returned to the LLM and displayed to the user.
 
-use crate::file_state::{
-    FileState, FileStateManager, InsertOperation, PatchOperation, ReplaceOperation,
-};
+use crate::file_state::{FileState, FileStateManager, PatchOperation};
 use anyhow::{Result, anyhow};
 use openrouter_api::models::tool::{FunctionDescription, Tool};
 use serde::{Deserialize, Deserializer};
@@ -306,7 +304,7 @@ fn verify_patch_context(operation: &PatchOperation, file_state: &FileState) -> R
                         ));
                     }
                     None => {
-                        if expected_after != "" {
+                        if !expected_after.is_empty() {
                             // If we expect empty context at EOF, it's fine.
                             return Err(anyhow!(
                                 "ContextAfter mismatch: expected '{}' but found end of file.",
@@ -332,7 +330,7 @@ fn verify_patch_context(operation: &PatchOperation, file_state: &FileState) -> R
                         ));
                     }
                     None => {
-                        if expected_before != "" {
+                        if !expected_before.is_empty() {
                             return Err(anyhow!(
                                 "ContextBefore mismatch: expected '{}' but found start of file.",
                                 expected_before
@@ -355,7 +353,7 @@ fn verify_patch_context(operation: &PatchOperation, file_state: &FileState) -> R
                         ));
                     }
                     None => {
-                        if expected_after != "" {
+                        if !expected_after.is_empty() {
                             return Err(anyhow!(
                                 "ContextAfter mismatch: expected '{}' but found end of file.",
                                 expected_after
