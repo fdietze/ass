@@ -121,17 +121,7 @@ async fn main() -> Result<()> {
             let response_message_opt =
                 streaming_executor::stream_and_collect_response(&or_client, request).await?;
 
-            if let Some(mut response_message) = response_message_opt {
-                // When a model uses "interleaved thinking", it provides both conversational text
-                // (`content`) and a `tool_call`. The `content` is the model's reasoning
-                // that leads to the tool call. We stream this reasoning to the console for the
-                // user to see. However, to prevent the model from getting confused in the
-                // next turn by its own (now outdated) reasoning, we clear the content from
-                // the message history. This forces it to focus on the result of the tool call.
-                if response_message.tool_calls.is_some() && !response_message.content.is_empty() {
-                    response_message.content = String::new();
-                }
-
+            if let Some(response_message) = response_message_opt {
                 messages.push(response_message.clone());
 
                 if let Some(tool_calls) = &response_message.tool_calls {
