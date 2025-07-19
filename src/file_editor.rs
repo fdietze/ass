@@ -80,7 +80,7 @@ pub fn edit_file_tool_schema() -> Tool {
         function: FunctionDescription {
             name: "edit_file".to_string(),
             description: Some(
-                "Creates new files or edits existing ones using a line-based patch protocol (LIF-Patch).
+                "Creates new files or edits existing ones using a line-based patch protocol (LIF-Patch). LIDs are stable across edits.
 
 It can create and edit multiple files in a single call.
 
@@ -92,7 +92,7 @@ It can create and edit multiple files in a single call.
 - **Replace/Delete**: `[\"r\", start_lid, end_lid, [\"new content\"]]`. To delete, provide an empty `content` array.
 - **Insert**: `[\"i\", after_lid, [\"new content\"]]`. Use `_START_OF_FILE_` for `after_lid` to insert at the beginning.
 
-**IMPORTANT**: You get the required `lif_hash` and LIDs from file attachments, a `read_file` call, or the result of a previous `edit_file` call (including file creation). If you just edited or created a file, **use the new `lif_hash` from the result** for your next operation. Only use `read_file` if the file isn't in your context or an edit failed because of a hash mismatch.
+**IMPORTANT**: You get the required `lif_hash` and LIDs from file attachments, a `read_file` call, or the result of a previous `edit_file` call (including file creation). After a successful edit, the LIDs of unchanged lines remain valid for subsequent edits. You DO NOT need to re-read the file. If you just edited or created a file, **use the new `lif_hash` from the result** for your next operation. Only use `read_file` if the file isn't in your context or an edit failed because of a hash mismatch.
 
 **Strategy**:
 - **Think in hunks**: For edits, a good patch is like a `git diff` hunk. Prefer to replace a whole logical block (like a function or `if` statement).
@@ -334,7 +334,10 @@ pub fn execute_file_operations(
             let new_short_hash = file_state.get_short_hash().to_string();
 
             Ok(format!(
-                "Patch applied successfully. New lif_hash: {new_short_hash}. Changes:\n{diff}"
+                "Patch from hash {old_hash} applied successfully. New lif_hash: {new_short_hash}. All LIDs from unchanged lines are still valid. Changes:\n{diff}",
+                old_hash = edit.lif_hash,
+                new_short_hash = new_short_hash,
+                diff = diff,
             ))
         })();
 
@@ -386,7 +389,7 @@ mod tests {
         assert!(result.is_ok());
 
         let output = result.unwrap();
-        assert!(output.contains("Patch applied successfully."));
+        assert!(output.contains("Patch from hash"));
         assert!(output.contains(&file_path));
 
         let disk_content = fs::read_to_string(&file_path).unwrap();
@@ -465,7 +468,7 @@ mod tests {
         // --- Assert ---
         // Check final string report
         assert!(result.contains(&format!("File: {file1_path}")));
-        assert!(result.contains("Patch applied successfully."));
+        assert!(result.contains("Patch from hash"));
         assert!(result.contains(&format!("File: {file2_path_str}")));
         assert!(result.contains("Error: Hash mismatch"));
 
@@ -583,7 +586,7 @@ mod tests {
         assert!(fs::read_to_string(file_to_create_path).unwrap() == "new file content");
 
         // Check edit result
-        assert!(result.contains("Patch applied successfully."));
+        assert!(result.contains("Patch from hash"));
         assert!(fs::read_to_string(file_to_edit_path).unwrap() == "was edited");
     }
 }
