@@ -248,7 +248,10 @@ fn generate_custom_diff(
             match (old_val, new_val) {
                 (Some(ov), Some(nv)) => {
                     // Modified
-                    if ov.trim() == nv.trim() {
+                    let old_normalized: String = ov.split_whitespace().collect();
+                    let new_normalized: String = nv.split_whitespace().collect();
+
+                    if old_normalized == new_normalized {
                         hunk_additions.push(format!("  LID{key}: {nv}"));
                     } else {
                         hunk_removals.push(style(format!("- LID{key}: {ov}")).red().to_string());
@@ -1413,5 +1416,51 @@ mod tests {
         assert_eq!(state.lines.get(&1000), Some(&"line 1".to_string()));
         assert_eq!(state.lines.get(&2000), Some(&"".to_string()));
         assert_eq!(state.get_full_content(), "line 1\n");
+    }
+
+    #[test]
+    fn test_diff_whitespace_change_is_neutral() {
+        let mut old_lines = BTreeMap::new();
+        old_lines.insert(1000, "context before".to_string());
+        old_lines.insert(2000, "my_function()".to_string());
+        old_lines.insert(3000, "context after".to_string());
+
+        let mut new_lines = old_lines.clone();
+        // Change the indentation of the middle line
+        new_lines.insert(2000, "  my_function()".to_string());
+
+        let diff = generate_custom_diff(&old_lines, &new_lines);
+
+        let expected_lines = [
+            format!("  LID{}: {}", 1000, "context before"),
+            // The changed line should be neutral, not +/-
+            format!("  LID{}: {}", 2000, "  my_function()"),
+            format!("  LID{}: {}", 3000, "context after"),
+        ]
+        .join("\n");
+
+        // Explicitly check that we don't have the add/remove lines
+        assert!(!diff.contains("- LID2000: my_function()"));
+        assert!(!diff.contains("+ LID2000:   my_function()"));
+
+        assert_eq!(diff, expected_lines);
+    }
+
+    #[test]
+    fn test_diff_internal_whitespace_is_neutral() {
+        let mut old_lines = BTreeMap::new();
+        old_lines.insert(1000, "fn my_func  (foo: &str) {}".to_string());
+
+        let mut new_lines = BTreeMap::new();
+        // The only change is the double space to a single space
+        new_lines.insert(1000, "fn my_func (foo: &str) {}".to_string());
+
+        let diff = generate_custom_diff(&old_lines, &new_lines);
+
+        // Should be treated as a whitespace-only change (neutral)
+        let expected_lines = [format!("  LID{}: {}", 1000, "fn my_func (foo: &str) {}")];
+        let expected_diff = expected_lines.join("\n");
+
+        assert_eq!(diff, expected_diff);
     }
 }
