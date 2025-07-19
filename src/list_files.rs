@@ -15,7 +15,7 @@ pub fn list_files_tool_schema() -> Tool {
         function: FunctionDescription {
             name: "list_files".to_string(),
             description: Some(
-                "Lists all files in a given directory, respecting gitignore and other ignore rules. It is recursive."
+                "Lists all files in a given directory recursively, respecting gitignore and other ignore rules."
                     .to_string(),
             ),
             parameters: serde_json::json!({

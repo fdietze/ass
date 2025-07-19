@@ -22,7 +22,8 @@
 use crate::file_state::{FileStateManager, PatchOperation};
 use anyhow::{Result, anyhow};
 use openrouter_api::models::tool::{FunctionDescription, Tool};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+use std::fs;
 use std::path::Path;
 
 /// Represents the arguments for a single file patch operation within a batch.
@@ -37,11 +38,34 @@ pub struct PatchArgs {
     pub patch: Vec<PatchOperation>,
 }
 
-/// Represents the arguments for the `edit_file` tool, which can handle multiple file edits.
+/// Represents the arguments for a single file creation operation.
 #[derive(Deserialize, Debug)]
-pub struct MultiFilePatchArgs {
-    /// A list of patch operations to be applied to one or more files.
+pub struct CreateFileArgs {
+    /// The path to the file to be created.
+    pub file_path: String,
+    /// The initial content of the new file, as a list of strings (lines).
+    pub content: Vec<String>,
+}
+
+/// Helper to deserialize a field that can be `null` into a default value.
+fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Default + Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    let opt = Option::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
+}
+
+/// Represents the arguments for the `edit_file` tool, which can handle multiple file creations and edits.
+#[derive(Deserialize, Debug)]
+pub struct FileOperationArgs {
+    /// A list of patch operations to be applied to one or more existing files.
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub edits: Vec<PatchArgs>,
+    /// A list of creation operations for new files.
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub creates: Vec<CreateFileArgs>,
 }
 
 /// Generates the tool schema for the `edit_file` tool.
@@ -56,32 +80,57 @@ pub fn edit_file_tool_schema() -> Tool {
         function: FunctionDescription {
             name: "edit_file".to_string(),
             description: Some(
-                "Edits files using a line-based patch protocol (LIF-Patch).
-IMPORTANT: You get the required `lif_hash` and LIDs from file attachments, `read_file` call, or the result of a previous `edit_file` call. If you just edited a file, **use the new `lif_hash` from the result of that edit** for your next operation. Only use `read_file` if the file isn't in your context or an edit failed because of a hash mismatch.
+                "Creates new files or edits existing ones using a line-based patch protocol (LIF-Patch).
 
-**Strategy**:
-- **Think in hunks**: A good patch is like a `git diff` hunk. Prefer to replace a whole logical block (like a function, `if` statement, or `for` loop) if you're making multiple changes within it. This is more robust than many small, scattered edits.
-- **Refactor in one go**: When refactoring, apply all related changes to a file in a single tool call. For example, if you rename a function and a variable inside it, do it with one `patch` array, not two separate tool calls.
-- **Avoid large, unchanged blocks**: While replacing hunks is good, don't replace hundreds of lines if only a few are changing. Find a balance.
+It can create and edit multiple files in a single call.
 
-**Operations per file**:
-- **Replace/Delete**: `[\"r\", start_lid, end_lid, [\"new content\"]]`. To delete, provide an empty array for `new_content`.
+**Operations**:
+- **Create File**: Use the `creates` property to make one or more new files with initial content.
+- **Edit File**: Use the `edits` property to apply patches to existing files.
+
+**Patch Operations for `edits`**:
+- **Replace/Delete**: `[\"r\", start_lid, end_lid, [\"new content\"]]`. To delete, provide an empty `content` array.
 - **Insert**: `[\"i\", after_lid, [\"new content\"]]`. Use `_START_OF_FILE_` for `after_lid` to insert at the beginning.
 
-**Important**:
-- Line identifiers (LIDs) MUST be the strings from when the file was read (e.g., 'LID1000'). NEVER use integer line numbers.
-- The `lif_hash` MUST match the hash from when the file was last read, attached or edited.
+**IMPORTANT**: You get the required `lif_hash` and LIDs from file attachments, a `read_file` call, or the result of a previous `edit_file` call (including file creation). If you just edited or created a file, **use the new `lif_hash` from the result** for your next operation. Only use `read_file` if the file isn't in your context or an edit failed because of a hash mismatch.
 
-**Example of a multi-file refactoring**:
-`{\"edits\":[{\"file_path\":\"src/main.rs\",\"lif_hash\":\"a1b2c3d4\",\"patch\":[[\"r\",\"LID5000\",\"LID5000\",[\"    new_function_name();\"]]]},{\"file_path\":\"src/lib.rs\",\"lif_hash\":\"e5f6g7h8\",\"patch\":[[\"r\",\"LID12000\",\"LID12000\",[\"pub fn new_function_name() {\"]]]}]}`"
+**Strategy**:
+- **Think in hunks**: For edits, a good patch is like a `git diff` hunk. Prefer to replace a whole logical block (like a function or `if` statement).
+- **Refactor in one go**: Apply all related changes (creations and edits) in a single tool call. For example, create a new module and then add it to `main.rs` in one step.
+
+**Rules**:
+- Line identifiers (LIDs) MUST be the strings from when the file was read (e.g., 'LID1000'). NEVER use integer line numbers.
+- The `lif_hash` for an edit MUST match the hash from when the file was last read, attached or edited.
+
+**Example of a mixed operation**:
+`{\"creates\":[{\"file_path\":\"src/new_helper.rs\",\"content\":[\"pub fn helper() {}\"]}],\"edits\":[{\"file_path\":\"src/main.rs\",\"lif_hash\":\"a1b2c3d4\",\"patch\":[[\"i\",\"LID1000\",[\"mod new_helper;\"]]]}]}`"
                     .to_string(),
             ),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
+                    "creates": {
+                        "type": "array",
+                        "description": "An array of file creation operations.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "file_path": {
+                                    "type": "string",
+                                    "description": "The relative path for the new file to be created."
+                                },
+                                "content": {
+                                    "type": "array",
+                                    "items": { "type": "string" },
+                                    "description": "The initial lines of content for the new file."
+                                }
+                            },
+                            "required": ["file_path", "content"]
+                        }
+                    },
                     "edits": {
                         "type": "array",
-                        "description": "An array of patch operations, either replace/delete or insert.",
+                        "description": "An array of patch operations to apply to existing files.",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -139,7 +188,7 @@ IMPORTANT: You get the required `lif_hash` and LIDs from file attachments, `read
                         }
                     }
                 },
-                "required": ["edits"]
+                "required": []
             }),
         },
     }
@@ -169,6 +218,50 @@ pub fn is_path_editable(path_to_edit: &Path, editable_paths: &[String]) -> Resul
     Ok(())
 }
 
+/// Checks if creating a file at the given path is allowed.
+/// It inspects the parent directory of the path to ensure it's within the editable scope.
+pub fn is_creation_path_safe(path_to_create: &Path, editable_paths: &[String]) -> Result<()> {
+    let parent_dir = path_to_create.parent().ok_or_else(|| {
+        anyhow!(
+            "Cannot create file '{}' because it has no parent directory.",
+            path_to_create.display()
+        )
+    })?;
+
+    // If the parent is empty, it means the path is relative to the current dir.
+    let dir_to_check = if parent_dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent_dir
+    };
+
+    let canonical_parent_dir = dir_to_check.canonicalize().map_err(|e| {
+        anyhow!(
+            "Cannot resolve parent directory '{}': {}. It might not exist.",
+            dir_to_check.display(),
+            e
+        )
+    })?;
+
+    let is_allowed = editable_paths.iter().any(|p| {
+        if let Ok(canonical_editable_path) = Path::new(p).canonicalize() {
+            canonical_parent_dir.starts_with(canonical_editable_path)
+        } else {
+            false
+        }
+    });
+
+    if !is_allowed {
+        return Err(anyhow!(
+            "Error: Cannot create file '{}' because its directory is not within any of the allowed editable paths: {:?}.",
+            path_to_create.display(),
+            editable_paths
+        ));
+    }
+
+    Ok(())
+}
+
 /// The main execution function for the `edit_file` tool.
 ///
 /// This function orchestrates the entire patch process:
@@ -177,17 +270,51 @@ pub fn is_path_editable(path_to_edit: &Path, editable_paths: &[String]) -> Resul
 /// 3.  Performs the critical hash check to ensure state consistency.
 /// 4.  Delegates the patch application, diffing, and file writing to the `FileState`.
 /// 5.  Returns the generated diff and the new short `lif_hash` to the LLM.
-pub fn execute_file_patch(
-    args: &MultiFilePatchArgs,
+pub fn execute_file_operations(
+    args: &FileOperationArgs,
     file_state_manager: &mut FileStateManager,
     editable_paths: &[String],
 ) -> Result<String> {
     let mut results = Vec::new();
 
-    if args.edits.is_empty() {
-        return Ok("No edits provided in the tool call.".to_string());
+    if args.creates.is_empty() && args.edits.is_empty() {
+        return Ok("No file operations provided in the tool call.".to_string());
     }
 
+    // --- Handle Creations First ---
+    for create in &args.creates {
+        let result = (|| {
+            let path_to_create = Path::new(&create.file_path);
+
+            if path_to_create.exists() {
+                return Err(anyhow!(
+                    "File '{}' already exists. Use an 'edits' operation to modify it.",
+                    path_to_create.display()
+                ));
+            }
+
+            is_creation_path_safe(path_to_create, editable_paths)?;
+
+            if let Some(parent) = path_to_create.parent() {
+                fs::create_dir_all(parent)?;
+            }
+
+            let content = create.content.join("\n");
+            fs::write(path_to_create, &content)?;
+
+            let file_state = file_state_manager.open_file(&create.file_path)?;
+            let lif_representation = file_state.get_lif_representation();
+
+            Ok(format!("File created successfully.\n{lif_representation}"))
+        })();
+
+        match result {
+            Ok(success_msg) => results.push(format!("File: {}\n{}", create.file_path, success_msg)),
+            Err(e) => results.push(format!("File: {}\nError: {}", create.file_path, e)),
+        }
+    }
+
+    // --- Handle Edits ---
     for edit in &args.edits {
         let result = (|| {
             let path_to_edit = Path::new(&edit.file_path);
@@ -243,7 +370,7 @@ mod tests {
         let initial_state = manager.open_file(&file_path).unwrap();
         let initial_short_hash = initial_state.get_short_hash().to_string();
 
-        let args = MultiFilePatchArgs {
+        let args = FileOperationArgs {
             edits: vec![PatchArgs {
                 file_path: file_path.clone(),
                 lif_hash: initial_short_hash.clone(),
@@ -252,9 +379,10 @@ mod tests {
                     content: vec!["line 2".to_string()],
                 }],
             }],
+            creates: vec![],
         };
 
-        let result = execute_file_patch(&args, &mut manager, &editable_paths);
+        let result = execute_file_operations(&args, &mut manager, &editable_paths);
         assert!(result.is_ok());
 
         let output = result.unwrap();
@@ -276,15 +404,16 @@ mod tests {
         let mut manager = FileStateManager::new();
         let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
-        let args = MultiFilePatchArgs {
+        let args = FileOperationArgs {
             edits: vec![PatchArgs {
                 file_path: file_path.clone(),
                 lif_hash: "wrong_hash".to_string(),
                 patch: vec![],
             }],
+            creates: vec![],
         };
 
-        let result = execute_file_patch(&args, &mut manager, &editable_paths);
+        let result = execute_file_operations(&args, &mut manager, &editable_paths);
         assert!(result.is_ok()); // The function itself doesn't error, it reports errors in the string
         let output = result.unwrap();
         assert!(output.contains("Error: Hash mismatch"));
@@ -325,12 +454,13 @@ mod tests {
             patch: vec![],
         };
 
-        let args = MultiFilePatchArgs {
+        let args = FileOperationArgs {
             edits: vec![valid_edit, invalid_edit],
+            creates: vec![],
         };
 
         // --- Act ---
-        let result = execute_file_patch(&args, &mut manager, &editable_paths).unwrap();
+        let result = execute_file_operations(&args, &mut manager, &editable_paths).unwrap();
 
         // --- Assert ---
         // Check final string report
@@ -353,5 +483,107 @@ mod tests {
 
         let file2_final_hash = manager.open_file(&file2_path_str).unwrap().get_short_hash();
         assert_eq!(file2_final_hash, file2_initial_hash); // Should be unchanged
+    }
+
+    #[test]
+    fn test_execute_create_file_successfully() {
+        let tmp_dir = Builder::new().prefix("test-creator-").tempdir().unwrap();
+        let file_path = tmp_dir.path().join("new_file.txt");
+        let file_path_str = file_path.to_str().unwrap().to_string();
+        let mut manager = FileStateManager::new();
+        let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
+
+        let args = FileOperationArgs {
+            creates: vec![CreateFileArgs {
+                file_path: file_path_str.clone(),
+                content: vec!["hello".to_string(), "world".to_string()],
+            }],
+            edits: vec![],
+        };
+
+        let result = execute_file_operations(&args, &mut manager, &editable_paths).unwrap();
+
+        assert!(result.contains("File created successfully."));
+        assert!(result.contains("LID1000: hello"));
+        assert!(result.contains("LID2000: world"));
+        assert!(result.contains("Hash:"));
+
+        let disk_content = fs::read_to_string(file_path).unwrap();
+        assert_eq!(disk_content, "hello\nworld");
+    }
+
+    #[test]
+    fn test_execute_create_file_already_exists() {
+        let (_tmp_dir, file_path) = setup_test_file("existing content");
+        let mut manager = FileStateManager::new();
+        let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+
+        let args = FileOperationArgs {
+            creates: vec![CreateFileArgs {
+                file_path: file_path.clone(),
+                content: vec!["new content".to_string()],
+            }],
+            edits: vec![],
+        };
+
+        let result = execute_file_operations(&args, &mut manager, &editable_paths).unwrap();
+        assert!(result.contains("Error: File"));
+        assert!(result.contains("already exists"));
+    }
+
+    #[test]
+    fn test_execute_create_file_not_editable() {
+        let tmp_dir = Builder::new().prefix("test-creator-").tempdir().unwrap();
+        let file_path = tmp_dir.path().join("new_file.txt");
+        let mut manager = FileStateManager::new();
+        let editable_paths = vec!["/some/other/dir".to_string()]; // Disallowed
+
+        let args = FileOperationArgs {
+            creates: vec![CreateFileArgs {
+                file_path: file_path.to_str().unwrap().to_string(),
+                content: vec!["content".to_string()],
+            }],
+            edits: vec![],
+        };
+
+        let result = execute_file_operations(&args, &mut manager, &editable_paths).unwrap();
+        assert!(result.contains("is not within any of the allowed editable paths"));
+    }
+
+    #[test]
+    fn test_execute_mixed_create_and_edit() {
+        let (_tmp_dir, file_to_edit_path) = setup_test_file("edit this");
+        let file_to_create_path = _tmp_dir.path().join("created.txt");
+        let mut manager = FileStateManager::new();
+        let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+
+        let initial_state = manager.open_file(&file_to_edit_path).unwrap();
+        let initial_hash = initial_state.get_short_hash().to_string();
+
+        let args = FileOperationArgs {
+            creates: vec![CreateFileArgs {
+                file_path: file_to_create_path.to_str().unwrap().to_string(),
+                content: vec!["new file content".to_string()],
+            }],
+            edits: vec![PatchArgs {
+                file_path: file_to_edit_path.clone(),
+                lif_hash: initial_hash,
+                patch: vec![PatchOperation::ReplaceRange {
+                    start_lid: "LID1000".to_string(),
+                    end_lid: "LID1000".to_string(),
+                    content: vec!["was edited".to_string()],
+                }],
+            }],
+        };
+
+        let result = execute_file_operations(&args, &mut manager, &editable_paths).unwrap();
+
+        // Check create result
+        assert!(result.contains("File created successfully."));
+        assert!(fs::read_to_string(file_to_create_path).unwrap() == "new file content");
+
+        // Check edit result
+        assert!(result.contains("Patch applied successfully."));
+        assert!(fs::read_to_string(file_to_edit_path).unwrap() == "was edited");
     }
 }
