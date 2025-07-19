@@ -19,7 +19,9 @@
 //! 4.  **Diff Generation**: After a patch is successfully applied, it generates a human-readable
 //!     diff of the changes, which is then returned to the LLM and displayed to the user.
 
-use crate::file_state::{FileStateManager, PatchOperation};
+use crate::file_state::{
+    FileState, FileStateManager, InsertOperation, PatchOperation, ReplaceOperation,
+};
 use anyhow::{Result, anyhow};
 use openrouter_api::models::tool::{FunctionDescription, Tool};
 use serde::{Deserialize, Deserializer};
@@ -89,8 +91,12 @@ It can create and edit multiple files in a single call.
 - **Edit File**: Use the `edits` property to apply patches to existing files.
 
 **Patch Operations for `edits`**:
-- **Replace/Delete**: `[\"r\", start_lid, end_lid, [\"new content\"]]`. To delete, provide an empty `content` array.
-- **Insert**: `[\"i\", after_lid, [\"new content\"]]`. Use `_START_OF_FILE_` for `after_lid` to insert at the beginning.
+Each patch operation is an object with an `op` field ('r' for replace/delete, 'i' for insert).
+- **Replace/Delete**: `{\"op\":\"r\", \"startLid\":lid, \"endLid\":lid, \"content\":[\"new\"], \"contextBefore\":lid_content, \"contextAfter\":lid_content}`. To delete, provide an empty `content` array.
+- **Insert**: `{\"op\":\"i\", \"afterLid\":lid, \"content\":[\"new\"], \"contextBefore\":lid_content, \"contextAfter\":lid_content}`. Use `_START_OF_FILE_` for `afterLid` to insert at the beginning.
+
+**Context for Safety**:
+The optional `contextBefore` and `contextAfter` fields are highly recommended. Provide the exact, unmodified content of the line immediately before `startLid` (for replace) or `afterLid` (for insert), and after `endLid` (for replace). This helps prevent errors if the file has changed in an unexpected way.
 
 **IMPORTANT**: You get the required `lif_hash` and LIDs from file attachments, a `read_file` call, or the result of a previous `edit_file` call (including file creation). After a successful edit, the LIDs of unchanged lines remain valid for subsequent edits. You DO NOT need to re-read the file. If you just edited or created a file, **use the new `lif_hash` from the result** for your next operation. Only use `read_file` if the file isn't in your context or an edit failed because of a hash mismatch.
 
@@ -103,7 +109,7 @@ It can create and edit multiple files in a single call.
 - The `lif_hash` for an edit MUST match the hash from when the file was last read, attached or edited.
 
 **Example of a mixed operation**:
-`{\"creates\":[{\"file_path\":\"src/new_helper.rs\",\"content\":[\"pub fn helper() {}\"]}],\"edits\":[{\"file_path\":\"src/main.rs\",\"lif_hash\":\"a1b2c3d4\",\"patch\":[[\"i\",\"LID1000\",[\"mod new_helper;\"]]]}]}`"
+`{\"creates\":[{\"file_path\":\"src/new_helper.rs\",\"content\":[\"pub fn helper() {}\"]}],\"edits\":[{\"file_path\":\"src/main.rs\",\"lif_hash\":\"a1b2c3d4\",\"patch\":[{\"op\":\"i\",\"afterLid\":\"LID1000\",\"content\":[\"mod new_helper;\"]}]}]}`"
                     .to_string(),
             ),
             parameters: serde_json::json!({
@@ -146,39 +152,31 @@ It can create and edit multiple files in a single call.
                                     "type": "array",
                                     "description": "An array of patch operations for this specific file.",
                                     "items": {
+                                        "type": "object",
+                                        "required": ["op", "content"],
                                         "oneOf": [
                                             {
-                                                "type": "array",
                                                 "description": "Replace a range of lines, like a 'diff hunk'. This is best for updating a whole function body or other logical block.",
-                                                "prefixItems": [
-                                                    { "const": "r", "description": "Operation code for 'replace'." },
-                                                    { "type": "string", "description": "The starting line identifier. MUST be a string like 'LID1000'. DO NOT use an integer line number." },
-                                                    { "type": "string", "description": "The ending line identifier. MUST be a string like 'LID2000'. DO NOT use an integer line number. For a single line, start_lid and end_lid are the same." },
-                                                    {
-                                                        "type": "array",
-                                                        "items": { "type": "string" },
-                                                        "description": "The new lines of content to replace the specified range."
-                                                    }
-                                                ],
-                                                "minItems": 4,
-                                                "maxItems": 4,
-                                                "additionalItems": false
+                                                "properties": {
+                                                    "op": {"const": "r"},
+                                                    "startLid": {"type": "string", "description": "The starting line identifier. MUST be a string like 'LID1000'."},
+                                                    "endLid": {"type": "string", "description": "The ending line identifier. MUST be a string like 'LID2000'. For a single line, start_lid and end_lid are the same."},
+                                                    "content": {"type": "array", "items": {"type": "string"}, "description": "The new lines of content to replace the specified range."},
+                                                    "contextBefore": {"type": "string", "description": "The exact content of the line immediately before startLid. Highly recommended for safety."},
+                                                    "contextAfter": {"type": "string", "description": "The exact content of the line immediately after endLid. Highly recommended for safety."}
+                                                },
+                                                "required": ["startLid", "endLid"]
                                             },
                                             {
-                                                "type": "array",
-                                                "description": "Insert a new block of lines after a specific line. Use `_START_OF_FILE_` as the `after_lid` to insert at the top of the file.",
-                                                "prefixItems": [
-                                                    { "const": "i", "description": "Operation code for 'insert'." },
-                                                    { "type": "string", "description": "The line identifier after which to insert. MUST be a string like 'LID3000' or '_START_OF_FILE_'. DO NOT use an integer line number." },
-                                                    {
-                                                        "type": "array",
-                                                        "items": { "type": "string" },
-                                                        "description": "The new lines of content to insert."
-                                                    }
-                                                ],
-                                                "minItems": 3,
-                                                "maxItems": 3,
-                                                "additionalItems": false
+                                                "description": "Insert a new block of lines after a specific line. Use `_START_OF_FILE_` as the `afterLid` to insert at the top of the file.",
+                                                "properties": {
+                                                    "op": {"const": "i"},
+                                                    "afterLid": {"type": "string", "description": "The line identifier after which to insert. MUST be 'LID3000' or '_START_OF_FILE'."},
+                                                    "content": {"type": "array", "items": {"type": "string"}, "description": "The new lines of content to insert."},
+                                                    "contextBefore": {"type": "string", "description": "The exact content of the `afterLid` line. Highly recommended for safety."},
+                                                    "contextAfter": {"type": "string", "description": "The exact content of the line immediately after `afterLid`. Highly recommended for safety."}
+                                                },
+                                                "required": ["afterLid"]
                                             }
                                         ]
                                     }
@@ -262,6 +260,115 @@ pub fn is_creation_path_safe(path_to_create: &Path, editable_paths: &[String]) -
     Ok(())
 }
 
+/// Verifies that the optional context lines in a patch operation match the actual file state.
+fn verify_patch_context(operation: &PatchOperation, file_state: &FileState) -> Result<()> {
+    match operation {
+        PatchOperation::Insert(op) => {
+            if let Some(ref expected_before) = op.context_before {
+                if op.after_lid == "_START_OF_FILE_" {
+                    // Context before _START_OF_FILE_ is not meaningful.
+                } else {
+                    let after_lid_num = FileState::parse_lid(&op.after_lid)?;
+                    match file_state.lines.get(&after_lid_num) {
+                        Some(actual_line) if actual_line == expected_before => {}
+                        Some(actual_line) => {
+                            return Err(anyhow!(
+                                "ContextBefore mismatch for insert after {}. Expected '{}', found '{}'",
+                                op.after_lid,
+                                expected_before,
+                                actual_line
+                            ));
+                        }
+                        None => {
+                            return Err(anyhow!(
+                                "LID '{}' for contextBefore not found.",
+                                op.after_lid
+                            ));
+                        }
+                    }
+                }
+            }
+            if let Some(ref expected_after) = op.context_after {
+                let after_lid_num = if op.after_lid == "_START_OF_FILE_" {
+                    0
+                } else {
+                    FileState::parse_lid(&op.after_lid)?
+                };
+                match file_state.lines.range(after_lid_num + 1..).next() {
+                    Some((_, actual_line)) if actual_line == expected_after => {}
+                    Some((lid, actual_line)) => {
+                        return Err(anyhow!(
+                            "ContextAfter mismatch for insert after {}. Expected '{}', found '{}' at LID{}",
+                            op.after_lid,
+                            expected_after,
+                            actual_line,
+                            lid
+                        ));
+                    }
+                    None => {
+                        if expected_after != "" {
+                            // If we expect empty context at EOF, it's fine.
+                            return Err(anyhow!(
+                                "ContextAfter mismatch: expected '{}' but found end of file.",
+                                expected_after
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        PatchOperation::Replace(op) => {
+            let start_lid_num = FileState::parse_lid(&op.start_lid)?;
+            if let Some(ref expected_before) = op.context_before {
+                match file_state.lines.range(..start_lid_num).next_back() {
+                    Some((_, actual_line)) if actual_line == expected_before => {}
+                    Some((lid, actual_line)) => {
+                        return Err(anyhow!(
+                            "ContextBefore mismatch at {}. Expected '{}', found '{}' at LID{}",
+                            op.start_lid,
+                            expected_before,
+                            actual_line,
+                            lid
+                        ));
+                    }
+                    None => {
+                        if expected_before != "" {
+                            return Err(anyhow!(
+                                "ContextBefore mismatch: expected '{}' but found start of file.",
+                                expected_before
+                            ));
+                        }
+                    }
+                }
+            }
+            let end_lid_num = FileState::parse_lid(&op.end_lid)?;
+            if let Some(ref expected_after) = op.context_after {
+                match file_state.lines.range(end_lid_num + 1..).next() {
+                    Some((_, actual_line)) if actual_line == expected_after => {}
+                    Some((lid, actual_line)) => {
+                        return Err(anyhow!(
+                            "ContextAfter mismatch at {}. Expected '{}', found '{}' at LID{}",
+                            op.end_lid,
+                            expected_after,
+                            actual_line,
+                            lid
+                        ));
+                    }
+                    None => {
+                        if expected_after != "" {
+                            return Err(anyhow!(
+                                "ContextAfter mismatch: expected '{}' but found end of file.",
+                                expected_after
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The main execution function for the `edit_file` tool.
 ///
 /// This function orchestrates the entire patch process:
@@ -330,6 +437,11 @@ pub fn execute_file_operations(
                 ));
             }
 
+            // Verify context for each operation before applying the whole patch
+            for op in &edit.patch {
+                verify_patch_context(op, file_state)?;
+            }
+
             let diff = file_state.apply_and_write_patch(&edit.patch)?;
             let new_short_hash = file_state.get_short_hash().to_string();
 
@@ -353,7 +465,7 @@ pub fn execute_file_operations(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::file_state::{FileStateManager, PatchOperation};
+    use crate::file_state::{FileStateManager, InsertOperation, PatchOperation, ReplaceOperation};
     use std::fs;
     use tempfile::Builder;
 
@@ -377,10 +489,12 @@ mod tests {
             edits: vec![PatchArgs {
                 file_path: file_path.clone(),
                 lif_hash: initial_short_hash.clone(),
-                patch: vec![PatchOperation::Insert {
+                patch: vec![PatchOperation::Insert(InsertOperation {
                     after_lid: "LID1000".to_string(),
                     content: vec!["line 2".to_string()],
-                }],
+                    context_before: Some("line 1".to_string()),
+                    context_after: Some("line 3".to_string()),
+                })],
             }],
             creates: vec![],
         };
@@ -445,10 +559,12 @@ mod tests {
         let valid_edit = PatchArgs {
             file_path: file1_path.clone(),
             lif_hash: file1_initial_hash,
-            patch: vec![PatchOperation::Insert {
+            patch: vec![PatchOperation::Insert(InsertOperation {
                 after_lid: "LID1000".to_string(),
                 content: vec!["file1 line2".to_string()],
-            }],
+                context_before: Some("file1 line1".to_string()),
+                context_after: None,
+            })],
         };
         // Edit for file2 has a hash mismatch
         let invalid_edit = PatchArgs {
@@ -571,11 +687,13 @@ mod tests {
             edits: vec![PatchArgs {
                 file_path: file_to_edit_path.clone(),
                 lif_hash: initial_hash,
-                patch: vec![PatchOperation::ReplaceRange {
+                patch: vec![PatchOperation::Replace(ReplaceOperation {
                     start_lid: "LID1000".to_string(),
                     end_lid: "LID1000".to_string(),
                     content: vec!["was edited".to_string()],
-                }],
+                    context_before: None,
+                    context_after: None,
+                })],
             }],
         };
 
@@ -588,5 +706,36 @@ mod tests {
         // Check edit result
         assert!(result.contains("Patch from hash"));
         assert!(fs::read_to_string(file_to_edit_path).unwrap() == "was edited");
+    }
+
+    #[test]
+    fn test_execute_patch_with_wrong_context() {
+        let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2\nline 3");
+        let mut manager = FileStateManager::new();
+        let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+
+        let initial_state = manager.open_file(&file_path).unwrap();
+        let initial_short_hash = initial_state.get_short_hash().to_string();
+
+        let args = FileOperationArgs {
+            edits: vec![PatchArgs {
+                file_path: file_path.clone(),
+                lif_hash: initial_short_hash.clone(),
+                patch: vec![PatchOperation::Insert(InsertOperation {
+                    after_lid: "LID2000".to_string(),
+                    content: vec!["new line".to_string()],
+                    context_before: Some("line 1".to_string()), // This is wrong
+                    context_after: Some("line 3".to_string()),
+                })],
+            }],
+            creates: vec![],
+        };
+
+        let result = execute_file_operations(&args, &mut manager, &editable_paths).unwrap();
+        assert!(result.contains("Error: ContextBefore mismatch"));
+
+        // Ensure file was not changed
+        let disk_content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(disk_content, "line 1\nline 2\nline 3");
     }
 }

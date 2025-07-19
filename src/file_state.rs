@@ -24,10 +24,8 @@
 use anyhow::{Result, anyhow};
 use console::style;
 use serde::Deserialize;
-use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::fmt;
 use std::fs;
 use std::path::PathBuf;
 
@@ -48,76 +46,36 @@ pub const STARTING_LID_GAP: u64 = 1000;
 ///   contiguous blocks of lines.
 /// - `Insert` is a separate, more explicit operation for purely additive changes.
 /// - The compact array format `["op_code", ...]` is token-efficient.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Deserialize)]
+#[serde(tag = "op", rename_all = "camelCase")]
 pub enum PatchOperation {
     /// Replaces a contiguous range of lines with new content.
-    ReplaceRange {
-        start_lid: String,
-        end_lid: String,
-        content: Vec<String>,
-    },
+    #[serde(rename = "r")]
+    Replace(ReplaceOperation),
     /// Inserts new lines after a specific existing line.
-    Insert {
-        after_lid: String,
-        content: Vec<String>,
-    },
+    #[serde(rename = "i")]
+    Insert(InsertOperation),
 }
 
-impl<'de> Deserialize<'de> for PatchOperation {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct PatchOperationVisitor;
+/// Represents the arguments for a 'replace' operation.
+#[derive(Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceOperation {
+    pub start_lid: String,
+    pub end_lid: String,
+    pub content: Vec<String>,
+    pub context_before: Option<String>,
+    pub context_after: Option<String>,
+}
 
-        impl<'de> Visitor<'de> for PatchOperationVisitor {
-            type Value = PatchOperation;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a sequence representing a patch operation")
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: SeqAccess<'de>,
-            {
-                let op_code: String = seq
-                    .next_element()?
-                    .ok_or_else(|| de::Error::invalid_length(0, &self))?;
-
-                match op_code.as_str() {
-                    "r" => {
-                        let start_lid: String = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(1, &self))?;
-                        let end_lid: String = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(2, &self))?;
-                        let content: Vec<String> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(3, &self))?;
-                        Ok(PatchOperation::ReplaceRange {
-                            start_lid,
-                            end_lid,
-                            content,
-                        })
-                    }
-                    "i" => {
-                        let after_lid: String = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(1, &self))?;
-                        let content: Vec<String> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(2, &self))?;
-                        Ok(PatchOperation::Insert { after_lid, content })
-                    }
-                    _ => Err(de::Error::unknown_variant(&op_code, &["r", "i"])),
-                }
-            }
-        }
-
-        deserializer.deserialize_seq(PatchOperationVisitor)
-    }
+/// Represents the arguments for an 'insert' operation.
+#[derive(Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InsertOperation {
+    pub after_lid: String,
+    pub content: Vec<String>,
+    pub context_before: Option<String>,
+    pub context_after: Option<String>,
 }
 
 /// Represents the in-memory state of a single "open" file using the LIF protocol.
@@ -323,29 +281,31 @@ impl FileState {
 
         for operation in patch {
             match operation {
-                PatchOperation::Insert { after_lid, content } => {
-                    let new_lids = Self::generate_new_lids(&temp_lines, after_lid, content.len())?;
-                    for (lid, line_content) in new_lids.iter().zip(content.iter()) {
+                PatchOperation::Insert(op) => {
+                    let new_lids =
+                        Self::generate_new_lids(&temp_lines, &op.after_lid, op.content.len())?;
+                    for (lid, line_content) in new_lids.iter().zip(op.content.iter()) {
                         temp_lines.insert(*lid, line_content.clone());
                     }
                 }
-                PatchOperation::ReplaceRange {
-                    start_lid,
-                    end_lid,
-                    content,
-                } => {
-                    let start_lid_num = Self::parse_lid(start_lid)?;
-                    let end_lid_num = Self::parse_lid(end_lid)?;
+                PatchOperation::Replace(op) => {
+                    let start_lid_num = Self::parse_lid(&op.start_lid)?;
+                    let end_lid_num = Self::parse_lid(&op.end_lid)?;
 
                     if !temp_lines.contains_key(&start_lid_num) {
-                        return Err(anyhow!("start_lid '{start_lid}' does not exist in file"));
+                        return Err(anyhow!(
+                            "start_lid '{}' does not exist in file",
+                            op.start_lid
+                        ));
                     }
                     if !temp_lines.contains_key(&end_lid_num) {
-                        return Err(anyhow!("end_lid '{end_lid}' does not exist in file"));
+                        return Err(anyhow!("end_lid '{}' does not exist in file", op.end_lid));
                     }
                     if start_lid_num > end_lid_num {
                         return Err(anyhow!(
-                            "start_lid '{start_lid}' cannot be numerically greater than end_lid '{end_lid}'"
+                            "start_lid '{}' cannot be numerically greater than end_lid '{}'",
+                            op.start_lid,
+                            op.end_lid
                         ));
                     }
 
@@ -365,10 +325,13 @@ impl FileState {
                         .map(|(k, _)| format!("LID{k}"))
                         .unwrap_or_else(|| "_START_OF_FILE_".to_string());
 
-                    let new_lids =
-                        Self::generate_new_lids(&temp_lines, &after_lid_for_insert, content.len())?;
+                    let new_lids = Self::generate_new_lids(
+                        &temp_lines,
+                        &after_lid_for_insert,
+                        op.content.len(),
+                    )?;
 
-                    for (lid, line_content) in new_lids.iter().zip(content.iter()) {
+                    for (lid, line_content) in new_lids.iter().zip(op.content.iter()) {
                         temp_lines.insert(*lid, line_content.clone());
                     }
                 }
@@ -481,7 +444,7 @@ impl FileState {
     }
 
     /// Parses a string like "LID1234" into its numeric form `1234`.
-    fn parse_lid(lid_str: &str) -> Result<u64> {
+    pub fn parse_lid(lid_str: &str) -> Result<u64> {
         if !lid_str.starts_with("LID") {
             return Err(anyhow!("Invalid LID format: {lid_str}"));
         }
@@ -680,10 +643,12 @@ mod tests {
         let (_tmp_dir, file_path) = setup_test_file("line 1\nline 3");
         let mut state = FileState::new(file_path.clone(), "line 1\nline 3");
 
-        let patch = vec![PatchOperation::Insert {
+        let patch = vec![PatchOperation::Insert(InsertOperation {
             after_lid: "LID1000".to_string(),
             content: vec!["line 2".to_string()],
-        }];
+            context_before: None,
+            context_after: None,
+        })];
 
         let diff = state.apply_and_write_patch(&patch).unwrap();
 
@@ -711,10 +676,12 @@ mod tests {
         let mut state = FileState::new(file_path, "line 1");
         let original_hash = state.lif_hash.clone();
 
-        let patch = vec![PatchOperation::Insert {
+        let patch = vec![PatchOperation::Insert(InsertOperation {
             after_lid: "_START_OF_FILE_".to_string(),
             content: vec!["new first line".to_string()],
-        }];
+            context_before: None,
+            context_after: Some("line 1".to_string()),
+        })];
         state.apply_patch(&patch).unwrap();
 
         assert_eq!(state.lines.len(), 2);
@@ -728,10 +695,12 @@ mod tests {
         let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2");
         let mut state = FileState::new(file_path, "line 1\nline 2");
 
-        let patch = vec![PatchOperation::Insert {
+        let patch = vec![PatchOperation::Insert(InsertOperation {
             after_lid: "LID1000".to_string(),
             content: vec!["new middle line".to_string()],
-        }];
+            context_before: Some("line 1".to_string()),
+            context_after: Some("line 2".to_string()),
+        })];
         state.apply_patch(&patch).unwrap();
 
         assert_eq!(state.lines.len(), 3);
@@ -745,11 +714,13 @@ mod tests {
         let (_tmp_dir, file_path) = setup_test_file(content);
         let mut state = FileState::new(file_path, content);
 
-        let patch = vec![PatchOperation::ReplaceRange {
+        let patch = vec![PatchOperation::Replace(ReplaceOperation {
             start_lid: "LID2000".to_string(),
             end_lid: "LID3000".to_string(),
             content: vec![],
-        }];
+            context_before: Some("line 1".to_string()),
+            context_after: Some("line 4".to_string()),
+        })];
         state.apply_patch(&patch).unwrap();
 
         assert_eq!(state.lines.len(), 2);
@@ -762,11 +733,13 @@ mod tests {
         let (_tmp_dir, file_path) = setup_test_file(content);
         let mut state = FileState::new(file_path, content);
 
-        let patch = vec![PatchOperation::ReplaceRange {
+        let patch = vec![PatchOperation::Replace(ReplaceOperation {
             start_lid: "LID2000".to_string(),
             end_lid: "LID3000".to_string(),
             content: vec!["replacement".to_string()],
-        }];
+            context_before: Some("line 1".to_string()),
+            context_after: Some("line 4".to_string()),
+        })];
         state.apply_patch(&patch).unwrap();
 
         assert_eq!(state.lines.len(), 3);
@@ -781,10 +754,12 @@ mod tests {
         // First open, reads from disk
         let state1 = manager.open_file(file_path.to_str().unwrap()).unwrap();
         assert_eq!(state1.get_full_content(), "initial");
-        let patch = vec![PatchOperation::Insert {
+        let patch = vec![PatchOperation::Insert(InsertOperation {
             after_lid: "LID1000".to_string(),
             content: vec![" new".to_string()],
-        }];
+            context_before: Some("initial".to_string()),
+            context_after: None,
+        })];
         state1.apply_patch(&patch).unwrap();
         assert_eq!(state1.get_full_content(), "initial\n new");
 
@@ -797,26 +772,43 @@ mod tests {
     fn test_deserialize_patch_operation() {
         let json_data = r#"
         [
-            ["r", "LID1000", "LID2000", ["new content"]],
-            ["i", "LID3000", ["inserted line 1", "inserted line 2"]]
+            {
+                "op": "r",
+                "startLid": "LID1000",
+                "endLid": "LID2000",
+                "content": ["new content"],
+                "contextBefore": "optional context",
+                "contextAfter": null
+            },
+            {
+                "op": "i",
+                "afterLid": "LID3000",
+                "content": ["inserted line 1", "inserted line 2"],
+                "contextBefore": null,
+                "contextAfter": "optional context 2"
+            }
         ]
         "#;
         let operations: Vec<PatchOperation> = serde_json::from_str(json_data).unwrap();
         assert_eq!(operations.len(), 2);
         assert_eq!(
             operations[0],
-            PatchOperation::ReplaceRange {
+            PatchOperation::Replace(ReplaceOperation {
                 start_lid: "LID1000".to_string(),
                 end_lid: "LID2000".to_string(),
-                content: vec!["new content".to_string()]
-            }
+                content: vec!["new content".to_string()],
+                context_before: Some("optional context".to_string()),
+                context_after: None
+            })
         );
         assert_eq!(
             operations[1],
-            PatchOperation::Insert {
+            PatchOperation::Insert(InsertOperation {
                 after_lid: "LID3000".to_string(),
-                content: vec!["inserted line 1".to_string(), "inserted line 2".to_string()]
-            }
+                content: vec!["inserted line 1".to_string(), "inserted line 2".to_string()],
+                context_before: None,
+                context_after: Some("optional context 2".to_string())
+            })
         );
     }
 
@@ -827,10 +819,12 @@ mod tests {
         let mut state = FileState::new(file_path, content);
 
         // First patch
-        let patch1 = vec![PatchOperation::Insert {
+        let patch1 = vec![PatchOperation::Insert(InsertOperation {
             after_lid: "LID1000".to_string(),
             content: vec!["inserted after 1".to_string()],
-        }];
+            context_before: Some("line 1".to_string()),
+            context_after: Some("line 2".to_string()),
+        })];
         state.apply_patch(&patch1).unwrap();
 
         assert_eq!(state.lines.len(), 4);
@@ -840,11 +834,13 @@ mod tests {
         );
 
         // Second patch
-        let patch2 = vec![PatchOperation::ReplaceRange {
+        let patch2 = vec![PatchOperation::Replace(ReplaceOperation {
             start_lid: "LID2000".to_string(),
             end_lid: "LID3000".to_string(),
             content: vec!["replacement".to_string()],
-        }];
+            context_before: Some("inserted after 1".to_string()),
+            context_after: None,
+        })];
         state.apply_patch(&patch2).unwrap();
 
         assert_eq!(state.lines.len(), 3);
@@ -854,10 +850,12 @@ mod tests {
         );
 
         // Third patch
-        let patch3 = vec![PatchOperation::Insert {
+        let patch3 = vec![PatchOperation::Insert(InsertOperation {
             after_lid: "LID1500".to_string(), // This was the LID for "inserted after 1"
             content: vec!["another insertion".to_string()],
-        }];
+            context_before: Some("inserted after 1".to_string()),
+            context_after: Some("replacement".to_string()),
+        })];
         state.apply_patch(&patch3).unwrap();
 
         assert_eq!(state.lines.len(), 4);
@@ -1183,11 +1181,13 @@ mod tests {
         let (_tmp_dir, file_path) = setup_test_file(content);
         let mut state = FileState::new(file_path, content);
 
-        let patch = vec![PatchOperation::ReplaceRange {
+        let patch = vec![PatchOperation::Replace(ReplaceOperation {
             start_lid: "LID3000".to_string(),
             end_lid: "LID1000".to_string(),
             content: vec!["new".to_string()],
-        }];
+            context_before: None,
+            context_after: None,
+        })];
 
         let result = state.apply_patch(&patch);
         assert!(result.is_err());
@@ -1205,11 +1205,13 @@ mod tests {
         let (_tmp_dir, file_path) = setup_test_file(content);
         let mut state = FileState::new(file_path, content);
 
-        let patch = vec![PatchOperation::ReplaceRange {
+        let patch = vec![PatchOperation::Replace(ReplaceOperation {
             start_lid: "LID999".to_string(), // Does not exist
             end_lid: "LID2000".to_string(),
             content: vec!["new".to_string()],
-        }];
+            context_before: None,
+            context_after: None,
+        })];
 
         let result = state.apply_patch(&patch);
         assert!(result.is_err());
@@ -1227,11 +1229,13 @@ mod tests {
         let (_tmp_dir, file_path) = setup_test_file(content);
         let mut state = FileState::new(file_path, content);
 
-        let patch = vec![PatchOperation::ReplaceRange {
+        let patch = vec![PatchOperation::Replace(ReplaceOperation {
             start_lid: "LID1000".to_string(),
             end_lid: "LID9999".to_string(), // Does not exist
             content: vec!["new".to_string()],
-        }];
+            context_before: None,
+            context_after: None,
+        })];
 
         let result = state.apply_patch(&patch);
         assert!(result.is_err());
@@ -1280,11 +1284,13 @@ mod tests {
         let (_tmp_dir, file_path) = setup_test_file(content);
         let mut state = FileState::new(file_path, content);
 
-        let patch = vec![PatchOperation::ReplaceRange {
+        let patch = vec![PatchOperation::Replace(ReplaceOperation {
             start_lid: "LID1000".to_string(),
             end_lid: "LID1000".to_string(),
             content: vec!["new first".to_string()],
-        }];
+            context_before: None,
+            context_after: None,
+        })];
         state.apply_patch(&patch).unwrap();
 
         assert_eq!(state.lines.len(), 3);
@@ -1297,11 +1303,13 @@ mod tests {
         let (_tmp_dir, file_path) = setup_test_file(content);
         let mut state = FileState::new(file_path, content);
 
-        let patch = vec![PatchOperation::ReplaceRange {
+        let patch = vec![PatchOperation::Replace(ReplaceOperation {
             start_lid: "LID3000".to_string(),
             end_lid: "LID3000".to_string(),
             content: vec!["new last".to_string()],
-        }];
+            context_before: None,
+            context_after: None,
+        })];
         state.apply_patch(&patch).unwrap();
 
         assert_eq!(state.lines.len(), 3);
@@ -1314,11 +1322,13 @@ mod tests {
         let (_tmp_dir, file_path) = setup_test_file(content);
         let mut state = FileState::new(file_path, content);
 
-        let patch = vec![PatchOperation::ReplaceRange {
+        let patch = vec![PatchOperation::Replace(ReplaceOperation {
             start_lid: "LID1000".to_string(),
             end_lid: "LID3000".to_string(),
             content: vec!["all new".to_string()],
-        }];
+            context_before: None,
+            context_after: None,
+        })];
         state.apply_patch(&patch).unwrap();
 
         assert_eq!(state.lines.len(), 1);
@@ -1331,11 +1341,13 @@ mod tests {
         let (_tmp_dir, file_path) = setup_test_file(content);
         let mut state = FileState::new(file_path, content);
 
-        let patch = vec![PatchOperation::ReplaceRange {
+        let patch = vec![PatchOperation::Replace(ReplaceOperation {
             start_lid: "LID1000".to_string(),
             end_lid: "LID3000".to_string(),
             content: vec![],
-        }];
+            context_before: None,
+            context_after: None,
+        })];
         state.apply_patch(&patch).unwrap();
 
         assert_eq!(state.lines.len(), 0);
@@ -1348,10 +1360,12 @@ mod tests {
         let (_tmp_dir, file_path) = setup_test_file(content);
         let mut state = FileState::new(file_path, content);
 
-        let patch = vec![PatchOperation::Insert {
+        let patch = vec![PatchOperation::Insert(InsertOperation {
             after_lid: "LID2000".to_string(),
             content: vec!["new last line".to_string()],
-        }];
+            context_before: None,
+            context_after: None,
+        })];
         state.apply_patch(&patch).unwrap();
 
         assert_eq!(state.lines.len(), 3);
@@ -1371,18 +1385,18 @@ mod tests {
     #[test]
     fn test_deserialize_malformed_patch_operation() {
         // Unknown operation code
-        let json_unknown_op = r#"[["d", "LID1000"]]"#;
+        let json_unknown_op = r#"[{"op": "d", "afterLid": "LID1000"}]"#;
         let result: Result<Vec<PatchOperation>, _> = serde_json::from_str(json_unknown_op);
         assert!(result.is_err());
 
-        // Incorrect number of args for "r"
-        let json_wrong_args_r = r#"[["r", "LID1000"]]"#;
-        let result: Result<Vec<PatchOperation>, _> = serde_json::from_str(json_wrong_args_r);
+        // Missing required field for "r"
+        let json_missing_field_r = r#"[{"op": "r", "startLid": "LID1000"}]"#;
+        let result: Result<Vec<PatchOperation>, _> = serde_json::from_str(json_missing_field_r);
         assert!(result.is_err());
 
-        // Incorrect number of args for "i"
-        let json_wrong_args_i = r#"[["i"]]"#;
-        let result: Result<Vec<PatchOperation>, _> = serde_json::from_str(json_wrong_args_i);
+        // Missing required field for "i"
+        let json_missing_field_i = r#"[{"op": "i"}]"#;
+        let result: Result<Vec<PatchOperation>, _> = serde_json::from_str(json_missing_field_i);
         assert!(result.is_err());
     }
 
