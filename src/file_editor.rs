@@ -99,7 +99,7 @@ It can create and edit multiple files in a single call.
 - **Refactor in one go**: Apply all related changes (creations and edits) in a single tool call. For example, create a new module and then add it to `main.rs` in one step.
 
 **Rules**:
-- Line identifiers (LIDs) MUST be the strings from when the file was read (e.g., 'LID1000'). NEVER use integer line numbers.
+- Line identifiers (LIDs) MUST be the strings from when the file was read (e.g., 'LID1000'). NEVER use the integer line numbers shown in the file view.
 - The `lif_hash` for an edit MUST match the hash from when the file was last read, attached or edited.
 
 **Example of a mixed operation**:

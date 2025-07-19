@@ -16,8 +16,11 @@ pub fn read_file_tool_schema() -> Tool {
         function: FunctionDescription {
             name: "read_file".to_string(),
             description: Some(
-                "Reads a file into context for viewing or editing. Provides content, line IDs (LIDs), and a short hash. This should only be called in rare-cases: initial file reads, re-reads after 5 edits to refresh the context. LIDs are stable across edits.
+                "Reads a file into context for viewing or editing. Provides content, line numbers, line IDs (LIDs), and a short hash.
+This should only be called in rare-cases: initial file reads, re-reads after 5 edits to refresh the context. LIDs are stable across edits.
 Example Output Format: `File: path/to/file.txt | Hash: a1b2c3d4 | Lines: 1-50/100`
+`1    LID1000: some content`
+`2    LID2000: some other content`
 IMPORTANT: The `edit_file` tool provides the new `lif_hash` after a successful edit. Attached files also provide this info. If you have this hash and the LIDs you need from the edit's diff, **don't read the file again**. Only use this tool for reading a file for the first time."
                     .to_string(),
             ),
@@ -93,9 +96,9 @@ mod tests {
 
         assert!(result.contains(&format!("Hash: {short_hash}")));
         assert!(result.contains("Lines: 1-3/3"));
-        assert!(result.contains("LID1000: line 1"));
-        assert!(result.contains("LID2000: line 2"));
-        assert!(result.contains("LID3000: line 3"));
+        assert!(result.contains("1    LID1000: line 1"));
+        assert!(result.contains("2    LID2000: line 2"));
+        assert!(result.contains("3    LID3000: line 3"));
     }
 
     #[test]
@@ -114,11 +117,11 @@ mod tests {
 
         let result = execute_read_file(&args, &config, &mut file_state_manager).unwrap();
         assert!(result.contains("Lines: 2-4/5"));
-        assert!(!result.contains("LID1000: 1"));
-        assert!(result.contains("LID2000: 2"));
-        assert!(result.contains("LID3000: 3"));
-        assert!(result.contains("LID4000: 4"));
-        assert!(!result.contains("LID5000: 5"));
+        assert!(!result.contains("1    LID1000: 1"));
+        assert!(result.contains("2    LID2000: 2"));
+        assert!(result.contains("3    LID3000: 3"));
+        assert!(result.contains("4    LID4000: 4"));
+        assert!(!result.contains("5    LID5000: 5"));
     }
 
     #[test]

@@ -445,9 +445,13 @@ impl FileState {
         let body = self
             .lines
             .iter()
+            .enumerate()
             .skip(start_line_num.saturating_sub(1))
             .take(end_line_num - start_line_num + 1)
-            .map(|(lid, content)| format!("LID{lid}: {content}"))
+            .map(|(i, (lid, content))| {
+                let line_num = i + 1;
+                format!("{line_num:<5}LID{lid}: {content}")
+            })
             .collect::<Vec<String>>()
             .join("\n");
 
@@ -641,7 +645,7 @@ mod tests {
             relative_path.display(),
             short_hash
         );
-        let expected_body = "LID1000: line 1\nLID2000: line 2";
+        let expected_body = "1    LID1000: line 1\n2    LID2000: line 2";
         assert_eq!(
             representation,
             format!("{expected_header}\n{expected_body}")
@@ -664,7 +668,7 @@ mod tests {
             relative_path.display(),
             short_hash
         );
-        let expected_body = "LID2000: 2\nLID3000: 3\nLID4000: 4";
+        let expected_body = "2    LID2000: 2\n3    LID3000: 3\n4    LID4000: 4";
         assert_eq!(
             partial_representation,
             format!("{expected_header}\n{expected_body}")
