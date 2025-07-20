@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use console::{Key, Term, style};
-use crossterm::event::{self, Event, KeyCode};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use openrouter_api::{
     OpenRouterClient,
     types::chat::{ChatCompletionRequest, Message},
@@ -275,24 +275,82 @@ async fn main() -> Result<()> {
 
         ui::ring_bell(&config);
 
-        loop {
-            print!("user> ");
-            io::stdout().flush()?;
+        'input_loop: loop {
+            let term = Term::stdout();
             let mut buffer = String::new();
-            match io::stdin().read_line(&mut buffer) {
-                Ok(0) => {
-                    println!("\nCTRL-D");
-                    break 'main_loop;
-                }
-                Ok(_) => {
-                    next_prompt = buffer.trim().to_string();
-                    if !next_prompt.is_empty() {
-                        break;
+
+            term.write_str("user> ")?;
+
+            crossterm::terminal::enable_raw_mode()?;
+            loop {
+                let event_result = event::read();
+                match event_result {
+                    Ok(Event::Key(key_event)) => match key_event.code {
+                        KeyCode::Enter => {
+                            crossterm::terminal::disable_raw_mode()?;
+                            term.write_line("")?;
+                            if buffer.is_empty() {
+                                continue 'input_loop;
+                            } else {
+                                next_prompt = buffer;
+                                break 'input_loop;
+                            }
+                        }
+                        KeyCode::Esc => {
+                            crossterm::terminal::disable_raw_mode()?;
+                            if buffer.is_empty() {
+                                if let Some(pos) = messages.iter().rposition(|m| m.role == "user") {
+                                    if pos > 0 && pos < messages.len() - 1 {
+                                        messages.truncate(pos);
+                                        term.write_str("\r")?;
+                                        term.clear_line()?;
+                                        term.write_line(
+                                            &style("Last exchange removed.").yellow().to_string(),
+                                        )?;
+                                        if let Some(last_message) = messages.last() {
+                                            term.write_str(&pretty_print_message(last_message))?;
+                                        }
+                                        continue 'input_loop;
+                                    }
+                                }
+                            } else {
+                                term.clear_chars(buffer.len())?;
+                                buffer.clear();
+                                term.write_str("user> ")?;
+                            }
+                        }
+                        KeyCode::Char('d') if key_event.modifiers == KeyModifiers::CONTROL => {
+                            if buffer.is_empty() {
+                                crossterm::terminal::disable_raw_mode()?;
+                                println!("\nCTRL-D");
+                                break 'main_loop;
+                            }
+                        }
+                        KeyCode::Char('c') if key_event.modifiers == KeyModifiers::CONTROL => {
+                            crossterm::terminal::disable_raw_mode()?;
+                            println!("\nCTRL-C");
+                            break 'main_loop;
+                        }
+                        KeyCode::Char(c) => {
+                            buffer.push(c);
+                            term.write_str(&c.to_string())?;
+                        }
+                        KeyCode::Backspace => {
+                            if !buffer.is_empty() {
+                                buffer.pop();
+                                term.clear_chars(1)?;
+                            }
+                        }
+                        _ => {}
+                    },
+                    Ok(Event::Resize(_, _)) => {
+                        // Ignore resize events
                     }
-                }
-                Err(error) => {
-                    println!("error: {error}");
-                    break 'main_loop;
+                    Err(_) => {
+                        crossterm::terminal::disable_raw_mode()?;
+                        break 'main_loop;
+                    }
+                    _ => {}
                 }
             }
         }
