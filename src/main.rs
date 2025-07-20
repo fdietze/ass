@@ -1,12 +1,14 @@
 use anyhow::Result;
 use clap::Parser;
 use console::{Key, Term, style};
+use crossterm::event::{self, Event, KeyCode};
 use openrouter_api::{
     OpenRouterClient,
     types::chat::{ChatCompletionRequest, Message},
     utils,
 };
 use std::io::{self, Write};
+use std::thread;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -162,15 +164,30 @@ async fn main() -> Result<()> {
                 let escape_listener = {
                     let cancellation_token = cancellation_token.clone();
                     tokio::task::spawn_blocking(move || {
-                        let term = Term::stdout();
                         loop {
                             if cancellation_token.is_cancelled() {
                                 break;
                             }
-                            if let Ok(Key::Escape) = term.read_key() {
-                                break;
+
+                            if crossterm::terminal::enable_raw_mode().is_ok() {
+                                // Poll with a zero timeout to make the check non-blocking.
+                                if event::poll(Duration::from_secs(0)).unwrap_or(false) {
+                                    if let Ok(Event::Key(key_event)) = event::read() {
+                                        if key_event.code == KeyCode::Esc {
+                                            let _ = crossterm::terminal::disable_raw_mode();
+                                            break;
+                                        }
+                                    }
+                                }
+                                // Always disable raw mode immediately after the check.
+                                let _ = crossterm::terminal::disable_raw_mode();
                             }
+
+                            // Sleep for a short duration to prevent a tight loop.
+                            thread::sleep(Duration::from_millis(100));
                         }
+                        // Ensure raw mode is disabled on exit.
+                        let _ = crossterm::terminal::disable_raw_mode();
                     })
                 };
 
