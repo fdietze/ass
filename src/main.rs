@@ -17,6 +17,7 @@ mod file_reader;
 mod file_state;
 mod list_files;
 mod path_expander;
+mod patch;
 mod prompt_builder;
 mod shell;
 mod streaming_executor;

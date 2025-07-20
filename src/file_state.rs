@@ -21,9 +21,9 @@
 //! -   **`PatchOperation`**: A set of commands (`insert`, `replace_range`) that describe an edit.
 //! -   **`lif_hash`**: A SHA-1 hash of the file's LIF representation, acting as a version identifier.
 
+use crate::patch::PatchOperation;
 use anyhow::{Result, anyhow};
 use console::style;
-use serde::Deserialize;
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
@@ -37,46 +37,6 @@ use std::path::PathBuf;
 /// of the entire file. This ensures that LIDs remain stable throughout the editing session,
 /// which is critical for the LLM's ability to reference lines reliably.
 pub const STARTING_LID_GAP: u64 = 1000;
-
-/// Defines the elemental operations that can be part of a patch.
-///
-/// ### Reasoning
-/// The operations are designed to be simple for an LLM to generate.
-/// - `ReplaceRange` is a powerful primitive that handles modification, insertion, and deletion of
-///   contiguous blocks of lines.
-/// - `Insert` is a separate, more explicit operation for purely additive changes.
-/// - The compact array format `["op_code", ...]` is token-efficient.
-#[derive(Debug, PartialEq, Deserialize)]
-#[serde(tag = "op", rename_all = "camelCase")]
-pub enum PatchOperation {
-    /// Replaces a contiguous range of lines with new content.
-    #[serde(rename = "r")]
-    Replace(ReplaceOperation),
-    /// Inserts new lines after a specific existing line.
-    #[serde(rename = "i")]
-    Insert(InsertOperation),
-}
-
-/// Represents the arguments for a 'replace' operation.
-#[derive(Debug, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReplaceOperation {
-    pub start_lid: String,
-    pub end_lid: String,
-    pub content: Vec<String>,
-    pub context_before: Option<String>,
-    pub context_after: Option<String>,
-}
-
-/// Represents the arguments for an 'insert' operation.
-#[derive(Debug, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InsertOperation {
-    pub after_lid: String,
-    pub content: Vec<String>,
-    pub context_before: Option<String>,
-    pub context_after: Option<String>,
-}
 
 /// Represents the in-memory state of a single "open" file using the LIF protocol.
 #[derive(Debug)]
@@ -554,6 +514,7 @@ impl FileStateManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::patch::{InsertOperation, ReplaceOperation};
     use tempfile::Builder;
 
     fn setup_test_file(content: &str) -> (tempfile::TempDir, PathBuf) {
