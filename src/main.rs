@@ -7,9 +7,8 @@ use openrouter_api::{
     utils,
 };
 use std::io::{self, Write};
-use std::thread;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 mod cli;
 mod config;
@@ -104,17 +103,6 @@ async fn main() -> Result<()> {
         .with_timeout(Duration::from_secs(config.timeout_seconds))
         .with_api_key(api_key)?;
 
-    let (cancellation_tx, mut cancellation_rx) = mpsc::channel(1);
-    thread::spawn(move || {
-        let term = Term::stdout();
-        loop {
-            if term.read_key().is_ok_and(|key| key == Key::Escape) {
-                // Non-blocking send, ignore if the channel is full or disconnected
-                let _ = cancellation_tx.try_send(());
-            }
-        }
-    });
-
     println!("Model: {}", config.model);
 
     let system_message = Message {
@@ -167,16 +155,33 @@ async fn main() -> Result<()> {
                 let api_call_future =
                     streaming_executor::stream_and_collect_response(&or_client, request);
 
-                tokio::select! {
-                    biased; // Prioritize cancellation check
+                let cancellation_token = CancellationToken::new();
+                let escape_listener = {
+                    let cancellation_token = cancellation_token.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let term = Term::stdout();
+                        loop {
+                            if cancellation_token.is_cancelled() {
+                                break;
+                            }
+                            if let Ok(Key::Escape) = term.read_key() {
+                                break;
+                            }
+                        }
+                    })
+                };
 
-                    _ = cancellation_rx.recv() => {
+                tokio::select! {
+                    biased; // Prioritize user input
+
+                    _ = escape_listener => {
                         println!("\n{}", style("Request cancelled by user.").yellow());
                         user_cancelled_request = true;
                         break;
                     },
 
                     result = api_call_future => {
+                        cancellation_token.cancel();
                         match result {
                             Ok(response) => {
                                 response_message_opt = Some(response);
