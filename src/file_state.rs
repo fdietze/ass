@@ -381,6 +381,42 @@ impl FileState {
         format!("{header}\n{body}")
     }
 
+    /// Extracts the content of lines within a given LID range, inclusive.
+    pub fn get_lines_in_range(
+        &self,
+        start_lid_str: &str,
+        end_lid_str: &str,
+    ) -> Result<Vec<String>> {
+        let start_lid = Self::parse_lid(start_lid_str)?;
+        let end_lid = Self::parse_lid(end_lid_str)?;
+
+        if start_lid > end_lid {
+            return Err(anyhow!(
+                "start_lid '{start_lid_str}' cannot be after end_lid '{end_lid_str}'"
+            ));
+        }
+
+        let lines_in_range: Vec<String> = self
+            .lines
+            .range(start_lid..=end_lid)
+            .map(|(_, content)| content.clone())
+            .collect();
+
+        // This check is important. An empty result can be valid (e.g., copying an empty range),
+        // but we should error if the LIDs themselves were not found in the file, which indicates
+        // a more serious logic error from the AI.
+        if lines_in_range.is_empty() {
+            if !self.lines.contains_key(&start_lid) && start_lid_str != "_START_OF_FILE_" {
+                return Err(anyhow!("start_lid '{start_lid_str}' not found in file."));
+            }
+            if !self.lines.contains_key(&end_lid) {
+                return Err(anyhow!("end_lid '{end_lid_str}' not found in file."));
+            }
+        }
+
+        Ok(lines_in_range)
+    }
+
     /// A simple helper to compute the SHA-1 hash of a string.
     fn calculate_hash(content: &str) -> String {
         let mut hasher = Sha1::new();

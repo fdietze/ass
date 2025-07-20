@@ -20,12 +20,13 @@
 //!     diff of the changes, which is then returned to the LLM and displayed to the user.
 
 use crate::file_state::{FileState, FileStateManager};
-use crate::patch::PatchOperation;
+use crate::patch::{PatchOperation, ReplaceOperation};
 use anyhow::{Result, anyhow};
 use openrouter_api::models::tool::{FunctionDescription, Tool};
 use serde::{Deserialize, Deserializer};
+use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Represents the arguments for a single file patch operation within a batch.
 #[derive(Deserialize, Debug)]
@@ -48,6 +49,44 @@ pub struct CreateFileArgs {
     pub content: Vec<String>,
 }
 
+/// Represents the arguments for a copy operation.
+#[derive(Deserialize, Debug)]
+pub struct CopyArgs {
+    /// The path of the file to copy lines from.
+    pub source_file_path: String,
+    /// The lif_hash of the source file.
+    pub source_lif_hash: String,
+    /// The starting line identifier of the range to copy.
+    pub start_lid: String,
+    /// The ending line identifier of the range to copy.
+    pub end_lid: String,
+    /// The path of the file to copy lines to. Can be the same as source_file_path.
+    pub dest_file_path: String,
+    /// The lif_hash of the destination file.
+    pub dest_lif_hash: String,
+    /// The line identifier in the destination file after which to insert the content.
+    pub after_lid: String,
+}
+
+/// Represents the arguments for a move operation.
+#[derive(Deserialize, Debug)]
+pub struct MoveArgs {
+    /// The path of the file to move lines from.
+    pub source_file_path: String,
+    /// The lif_hash of the source file.
+    pub source_lif_hash: String,
+    /// The starting line identifier of the range to move.
+    pub start_lid: String,
+    /// The ending line identifier of the range to move.
+    pub end_lid: String,
+    /// The path of the file to move lines to. Can be the same as source_file_path.
+    pub dest_file_path: String,
+    /// The lif_hash of the destination file.
+    pub dest_lif_hash: String,
+    /// The line identifier in the destination file after which to insert the content.
+    pub after_lid: String,
+}
+
 /// Helper to deserialize a field that can be `null` into a default value.
 fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
@@ -67,6 +106,12 @@ pub struct FileOperationArgs {
     /// A list of creation operations for new files.
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub creates: Vec<CreateFileArgs>,
+    /// A list of copy operations.
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub copies: Vec<CopyArgs>,
+    /// A list of move operations.
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub moves: Vec<MoveArgs>,
 }
 
 /// Generates the tool schema for the `edit_file` tool.
@@ -81,16 +126,19 @@ pub fn edit_file_tool_schema() -> Tool {
         function: FunctionDescription {
             name: "edit_file".to_string(),
             description: Some(
-                "Creates new files or edits existing ones using a line-based patch protocol (LIF-Patch). LIDs are stable across edits.
+                "Creates, edits, copies, or moves files using a line-based protocol (LIF-Patch). It can perform multiple operations in a single call.
 
-It can create and edit multiple files in a single call.
+**Execution Order**: Operations are **always** executed in this fixed order: 1. `creates`, 2. `copies`, 3. `moves`, 4. `edits`.
+
+**State Chaining**: This tool supports chaining operations. If you copy code into `file_b.rs` and then want to edit `file_b.rs` in the same call, you can. Just provide the `lif_hash` for `file_b.rs` that you had *before* this call. The tool is smart enough to apply the subsequent edit to the *intermediate* state of the file after the copy. You only need to re-read a file if an operation fails with a hash mismatch, which indicates the file was changed by an external process.
 
 **Operations**:
-- **Create File**: Use the `creates` property to make one or more new files with initial content.
-- **Edit File**: Use the `edits` property to apply patches to existing files.
+- **Create File**: Use `creates` to make new files.
+- **Copy Lines**: Use `copies` to copy a range of lines from a source file to a destination file.
+- **Move Lines**: Use `moves` to move a range of lines. This is a copy followed by a delete from the source.
+- **Edit File**: Use `edits` to apply low-level patches (insert/replace) to existing files.
 
 **Patch Operations for `edits`**:
-Each patch operation is an object with an `op` field ('r' for replace/delete, 'i' for insert).
 - **Replace/Delete**: `{\"op\":\"r\", \"startLid\":lid, \"endLid\":lid, \"content\":[\"new\"], \"contextBefore\":lid_content, \"contextAfter\":lid_content}`. To delete, provide an empty `content` array.
 - **Insert**: `{\"op\":\"i\", \"afterLid\":lid, \"content\":[\"new\"], \"contextBefore\":lid_content, \"contextAfter\":lid_content}`. Use `_START_OF_FILE_` for `afterLid` to insert at the beginning.
 
@@ -108,7 +156,7 @@ The optional `contextBefore` and `contextAfter` fields are highly recommended. P
 - The `lif_hash` for an edit MUST match the hash from when the file was last read, attached or edited.
 
 **Example of a mixed operation**:
-`{\"creates\":[{\"file_path\":\"src/new_helper.rs\",\"content\":[\"pub fn helper() {}\"]}],\"edits\":[{\"file_path\":\"src/main.rs\",\"lif_hash\":\"a1b2c3d4\",\"patch\":[{\"op\":\"i\",\"afterLid\":\"LID1000\",\"content\":[\"mod new_helper;\"]}]}]}`"
+`{\"creates\":[{\"file_path\":\"src/new_helper.rs\",\"content\":[\"pub fn helper() {}\"]}], \"moves\":[{\"source_file_path\":\"src/main.rs\",\"source_lif_hash\":\"a1b2c3d4\",\"start_lid\":\"LID1020\",\"end_lid\":\"LID1025\",\"dest_file_path\":\"src/new_helper.rs\",\"dest_lif_hash\":\"e5f6g7h8\",\"after_lid\":\"LID1000\"}],\"edits\":[{\"file_path\":\"src/main.rs\",\"lif_hash\":\"a1b2c3d4\",\"patch\":[{\"op\":\"i\",\"afterLid\":\"LID1000\",\"content\":[\"mod new_helper;\"]}]}]}`"
                     .to_string(),
             ),
             parameters: serde_json::json!({
@@ -182,6 +230,40 @@ The optional `contextBefore` and `contextAfter` fields are highly recommended. P
                                 }
                             },
                             "required": ["file_path", "lif_hash", "patch"]
+                        }
+                    },
+                    "copies": {
+                        "type": "array",
+                        "description": "An array of copy operations, executed after creates and before moves.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "source_file_path": { "type": "string", "description": "The path of the file to copy lines from." },
+                                "source_lif_hash": { "type": "string", "description": "The lif_hash of the source file." },
+                                "start_lid": { "type": "string", "description": "The starting line identifier of the range to copy." },
+                                "end_lid": { "type": "string", "description": "The ending line identifier of the range to copy." },
+                                "dest_file_path": { "type": "string", "description": "The path of the file to copy lines to." },
+                                "dest_lif_hash": { "type": "string", "description": "The lif_hash of the destination file." },
+                                "after_lid": { "type": "string", "description": "The line identifier in the destination file after which to insert. Use `_START_OF_FILE_` for the beginning." }
+                            },
+                            "required": ["source_file_path", "source_lif_hash", "start_lid", "end_lid", "dest_file_path", "dest_lif_hash", "after_lid"]
+                        }
+                    },
+                    "moves": {
+                        "type": "array",
+                        "description": "An array of move operations, executed after copies and before edits.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "source_file_path": { "type": "string", "description": "The path of the file to move lines from." },
+                                "source_lif_hash": { "type": "string", "description": "The lif_hash of the source file." },
+                                "start_lid": { "type": "string", "description": "The starting line identifier of the range to move." },
+                                "end_lid": { "type": "string", "description": "The ending line identifier of the range to move." },
+                                "dest_file_path": { "type": "string", "description": "The path of the file to move lines to." },
+                                "dest_lif_hash": { "type": "string", "description": "The lif_hash of the destination file." },
+                                "after_lid": { "type": "string", "description": "The line identifier in the destination file after which to insert. Use `_START_OF_FILE_` for the beginning." }
+                            },
+                            "required": ["source_file_path", "source_lif_hash", "start_lid", "end_lid", "dest_file_path", "dest_lif_hash", "after_lid"]
                         }
                     }
                 },
@@ -419,8 +501,13 @@ pub fn execute_file_operations(
     editable_paths: &[String],
 ) -> Result<String> {
     let mut results = Vec::new();
+    let mut modified_files_this_session = HashSet::<PathBuf>::new();
 
-    if args.creates.is_empty() && args.edits.is_empty() {
+    if args.creates.is_empty()
+        && args.edits.is_empty()
+        && args.copies.is_empty()
+        && args.moves.is_empty()
+    {
         return Ok("No file operations provided in the tool call.".to_string());
     }
 
@@ -448,12 +535,142 @@ pub fn execute_file_operations(
             let file_state = file_state_manager.open_file(&create.file_path)?;
             let lif_representation = file_state.get_lif_representation();
 
+            modified_files_this_session.insert(file_state.path.clone());
+
             Ok(format!("File created successfully.\n{lif_representation}"))
         })();
 
         match result {
             Ok(success_msg) => results.push(format!("File: {}\n{}", create.file_path, success_msg)),
             Err(e) => results.push(format!("File: {}\nError: {}", create.file_path, e)),
+        }
+    }
+
+    // --- Handle Copies ---
+    for copy in &args.copies {
+        let op_description = format!(
+            "copy from {} to {}",
+            copy.source_file_path, copy.dest_file_path
+        );
+        let result = (|| {
+            is_path_editable(Path::new(&copy.source_file_path), editable_paths)?;
+            is_path_editable(Path::new(&copy.dest_file_path), editable_paths)?;
+
+            // 1. Get source state and check hash
+            let source_state = file_state_manager.open_file(&copy.source_file_path)?;
+            if source_state.get_short_hash() != copy.source_lif_hash
+                && !modified_files_this_session.contains(&source_state.path)
+            {
+                return Err(anyhow!(
+                    "Source hash mismatch. Expected '{}' but file is '{}'. File was modified externally.",
+                    copy.source_lif_hash,
+                    source_state.get_short_hash()
+                ));
+            }
+
+            // 2. Extract content to copy
+            let content_to_copy =
+                source_state.get_lines_in_range(&copy.start_lid, &copy.end_lid)?;
+
+            // 3. Get destination state and check hash
+            let dest_state = file_state_manager.open_file(&copy.dest_file_path)?;
+            if dest_state.get_short_hash() != copy.dest_lif_hash
+                && !modified_files_this_session.contains(&dest_state.path)
+            {
+                return Err(anyhow!(
+                    "Destination hash mismatch. Expected '{}' but file is '{}'. File was modified externally.",
+                    copy.dest_lif_hash,
+                    dest_state.get_short_hash()
+                ));
+            }
+            let old_hash = dest_state.get_short_hash().to_string();
+
+            // 4. Create and apply insert patch
+            let insert_op = PatchOperation::Insert(crate::patch::InsertOperation {
+                after_lid: copy.after_lid.clone(),
+                content: content_to_copy,
+                context_before: None, // Context checks are less reliable across files/complex ops
+                context_after: None,
+            });
+            let diff = dest_state.apply_and_write_patch(&[insert_op])?;
+            modified_files_this_session.insert(dest_state.path.clone());
+            let new_hash = dest_state.get_short_hash();
+
+            Ok(format!(
+                "Patch from hash {old_hash} applied successfully. New lif_hash: {new_hash}. Changes:\n{diff}"
+            ))
+        })();
+
+        match result {
+            Ok(success_msg) => results.push(format!("Operation: {op_description}\n{success_msg}")),
+            Err(e) => results.push(format!("Operation: {op_description}\nError: {e}")),
+        }
+    }
+
+    // --- Handle Moves ---
+    for mov in &args.moves {
+        let op_description = format!(
+            "move from {} to {}",
+            mov.source_file_path, mov.dest_file_path
+        );
+        let result = (|| {
+            is_path_editable(Path::new(&mov.source_file_path), editable_paths)?;
+            is_path_editable(Path::new(&mov.dest_file_path), editable_paths)?;
+
+            // --- 1. Perform the "copy" part of the move ---
+            let content_to_move = {
+                let source_state = file_state_manager.open_file(&mov.source_file_path)?;
+                if source_state.get_short_hash() != mov.source_lif_hash
+                    && !modified_files_this_session.contains(&source_state.path)
+                {
+                    return Err(anyhow!("Source hash mismatch."));
+                }
+                source_state.get_lines_in_range(&mov.start_lid, &mov.end_lid)?
+            };
+
+            let dest_diff = {
+                let dest_state = file_state_manager.open_file(&mov.dest_file_path)?;
+                if dest_state.get_short_hash() != mov.dest_lif_hash
+                    && !modified_files_this_session.contains(&dest_state.path)
+                {
+                    return Err(anyhow!("Destination hash mismatch."));
+                }
+                let insert_op = PatchOperation::Insert(crate::patch::InsertOperation {
+                    after_lid: mov.after_lid.clone(),
+                    content: content_to_move,
+                    context_before: None,
+                    context_after: None,
+                });
+                let diff = dest_state.apply_and_write_patch(&[insert_op])?;
+                modified_files_this_session.insert(dest_state.path.clone());
+                diff
+            };
+
+            // --- 2. Perform the "delete" part of the move ---
+            let source_diff = {
+                let source_state = file_state_manager.open_file(&mov.source_file_path)?;
+                // No need to re-check hash, we have a mutable borrow now.
+                let delete_op = PatchOperation::Replace(ReplaceOperation {
+                    start_lid: mov.start_lid.clone(),
+                    end_lid: mov.end_lid.clone(),
+                    content: vec![],
+                    context_before: None,
+                    context_after: None,
+                });
+                let diff = source_state.apply_and_write_patch(&[delete_op])?;
+                modified_files_this_session.insert(source_state.path.clone());
+                diff
+            };
+
+            Ok(format!(
+                "Destination ({}) changes:\n{}\n\nSource ({}) changes:\n{}",
+                mov.dest_file_path, dest_diff, mov.source_file_path, source_diff
+            ))
+        })();
+
+        match result {
+            Ok(success_msg) => results.push(format!("Operation: {op_description}\n{success_msg}")),
+            Err(e) => results.push(format!("Operation: {op_description}\nError: {e}")),
         }
     }
 
@@ -465,9 +682,11 @@ pub fn execute_file_operations(
 
             let file_state = file_state_manager.open_file(&edit.file_path)?;
 
-            if edit.lif_hash != file_state.get_short_hash() {
+            if file_state.get_short_hash() != edit.lif_hash
+                && !modified_files_this_session.contains(&file_state.path)
+            {
                 return Err(anyhow!(
-                    "Hash mismatch. Expected hash '{}' but current hash is '{}'. The file has changed. Please read it again before patching.",
+                    "Hash mismatch. Expected hash '{}' but current hash is '{}'. The file was modified externally. Please read it again before patching.",
                     edit.lif_hash,
                     file_state.get_short_hash()
                 ));
@@ -479,6 +698,7 @@ pub fn execute_file_operations(
             }
 
             let diff = file_state.apply_and_write_patch(&edit.patch)?;
+            modified_files_this_session.insert(file_state.path.clone());
             let new_short_hash = file_state.get_short_hash().to_string();
 
             Ok(format!(
@@ -534,6 +754,8 @@ mod tests {
                 })],
             }],
             creates: vec![],
+            copies: vec![],
+            moves: vec![],
         };
 
         let result = execute_file_operations(&args, &mut manager, &editable_paths);
@@ -565,6 +787,8 @@ mod tests {
                 patch: vec![],
             }],
             creates: vec![],
+            copies: vec![],
+            moves: vec![],
         };
 
         let result = execute_file_operations(&args, &mut manager, &editable_paths);
@@ -613,6 +837,8 @@ mod tests {
         let args = FileOperationArgs {
             edits: vec![valid_edit, invalid_edit],
             creates: vec![],
+            copies: vec![],
+            moves: vec![],
         };
 
         // --- Act ---
@@ -655,6 +881,8 @@ mod tests {
                 content: vec!["hello".to_string(), "world".to_string()],
             }],
             edits: vec![],
+            copies: vec![],
+            moves: vec![],
         };
 
         let result = execute_file_operations(&args, &mut manager, &editable_paths).unwrap();
@@ -680,6 +908,8 @@ mod tests {
                 content: vec!["new content".to_string()],
             }],
             edits: vec![],
+            copies: vec![],
+            moves: vec![],
         };
 
         let result = execute_file_operations(&args, &mut manager, &editable_paths).unwrap();
@@ -700,6 +930,8 @@ mod tests {
                 content: vec!["content".to_string()],
             }],
             edits: vec![],
+            copies: vec![],
+            moves: vec![],
         };
 
         let result = execute_file_operations(&args, &mut manager, &editable_paths).unwrap();
@@ -732,6 +964,8 @@ mod tests {
                     context_after: None,
                 })],
             }],
+            copies: vec![],
+            moves: vec![],
         };
 
         let result = execute_file_operations(&args, &mut manager, &editable_paths).unwrap();
@@ -766,6 +1000,8 @@ mod tests {
                 })],
             }],
             creates: vec![],
+            copies: vec![],
+            moves: vec![],
         };
 
         let result = execute_file_operations(&args, &mut manager, &editable_paths).unwrap();
@@ -798,6 +1034,8 @@ mod tests {
                 })],
             }],
             creates: vec![],
+            copies: vec![],
+            moves: vec![],
         };
 
         let result = execute_file_operations(&args, &mut manager, &editable_paths);
@@ -838,6 +1076,8 @@ mod tests {
                 })],
             }],
             creates: vec![],
+            copies: vec![],
+            moves: vec![],
         };
 
         let result = execute_file_operations(&args, &mut manager, &editable_paths);
@@ -851,5 +1091,96 @@ mod tests {
 
         let disk_content = fs::read_to_string(&file_path).unwrap();
         assert_eq!(disk_content, "line 1\nline 2\n  line 3  ");
+    }
+
+    #[test]
+    fn test_copy_intra_file() {
+        let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2\nline 3");
+        let mut manager = FileStateManager::new();
+        let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+
+        let initial_state = manager.open_file(&file_path).unwrap();
+        let initial_hash = initial_state.get_short_hash().to_string();
+
+        let args = FileOperationArgs {
+            copies: vec![CopyArgs {
+                source_file_path: file_path.clone(),
+                source_lif_hash: initial_hash.clone(),
+                start_lid: "LID1000".to_string(),
+                end_lid: "LID1000".to_string(),
+                dest_file_path: file_path.clone(),
+                dest_lif_hash: initial_hash,
+                after_lid: "LID3000".to_string(),
+            }],
+            creates: vec![],
+            edits: vec![],
+            moves: vec![],
+        };
+
+        let result = execute_file_operations(&args, &mut manager, &editable_paths).unwrap();
+        assert!(!result.contains("Error:"), "Operation should succeed");
+
+        let content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(content, "line 1\nline 2\nline 3\nline 1");
+    }
+
+    #[test]
+    fn test_move_inter_file_and_chain_edit() {
+        let (_tmp_dir, source_path) = setup_test_file("... irrelevant ...\nfn my_func() {}\n...");
+        let (_tmp_dir2, dest_path) = setup_test_file("mod helper;");
+        let mut manager = FileStateManager::new();
+        let editable_paths = vec![
+            _tmp_dir.path().to_str().unwrap().to_string(),
+            _tmp_dir2.path().to_str().unwrap().to_string(),
+        ];
+
+        let source_hash = manager
+            .open_file(&source_path)
+            .unwrap()
+            .get_short_hash()
+            .to_string();
+        let dest_hash = manager
+            .open_file(&dest_path)
+            .unwrap()
+            .get_short_hash()
+            .to_string();
+
+        let args = FileOperationArgs {
+            moves: vec![MoveArgs {
+                source_file_path: source_path.clone(),
+                source_lif_hash: source_hash,
+                start_lid: "LID2000".to_string(),
+                end_lid: "LID2000".to_string(),
+                dest_file_path: dest_path.clone(),
+                dest_lif_hash: dest_hash.clone(),
+                after_lid: "LID1000".to_string(),
+            }],
+            edits: vec![PatchArgs {
+                file_path: dest_path.clone(),
+                lif_hash: dest_hash, // Note: using the *original* hash
+                patch: vec![PatchOperation::Replace(ReplaceOperation {
+                    start_lid: "LID1500".to_string(), // LID of the moved function
+                    end_lid: "LID1500".to_string(),
+                    content: vec!["pub fn my_func() {}".to_string()], // Make it public
+                    context_before: None,
+                    context_after: None,
+                })],
+            }],
+            creates: vec![],
+            copies: vec![],
+        };
+
+        let result = execute_file_operations(&args, &mut manager, &editable_paths).unwrap();
+        assert!(
+            !result.contains("Error:"),
+            "Operation should succeed, but got {}",
+            result
+        );
+
+        let source_content = fs::read_to_string(&source_path).unwrap();
+        assert_eq!(source_content, "... irrelevant ...\n...");
+
+        let dest_content = fs::read_to_string(&dest_path).unwrap();
+        assert_eq!(dest_content, "mod helper;\npub fn my_func() {}");
     }
 }
