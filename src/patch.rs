@@ -9,7 +9,7 @@ use serde::Deserialize;
 /// - `Insert` is a separate, more explicit operation for purely additive changes.
 /// - The compact array format `["op_code", ...]` is token-efficient.
 #[derive(Debug, PartialEq, Deserialize)]
-#[serde(tag = "op", rename_all = "camelCase")]
+#[serde(tag = "op")]
 pub enum PatchOperation {
     /// Replaces a contiguous range of lines with new content.
     #[serde(rename = "r")]
@@ -21,7 +21,7 @@ pub enum PatchOperation {
 
 /// Represents the arguments for a 'replace' operation.
 #[derive(Debug, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct ReplaceOperation {
     pub start_lid: String,
     pub end_lid: String,
@@ -32,7 +32,7 @@ pub struct ReplaceOperation {
 
 /// Represents the arguments for an 'insert' operation.
 #[derive(Debug, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct InsertOperation {
     pub after_lid: String,
     pub content: Vec<String>,

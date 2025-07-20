@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 
 /// Represents the arguments for a single file patch operation within a batch.
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
 pub struct PatchArgs {
     /// The path to the file that the patch should be applied to.
     pub file_path: String,
@@ -42,6 +43,7 @@ pub struct PatchArgs {
 
 /// Represents the arguments for a single file creation operation.
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
 pub struct CreateFileArgs {
     /// The path to the file to be created.
     pub file_path: String,
@@ -51,6 +53,7 @@ pub struct CreateFileArgs {
 
 /// Represents the arguments for a copy operation.
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
 pub struct CopyArgs {
     /// The path of the file to copy lines from.
     pub source_file_path: String,
@@ -70,6 +73,7 @@ pub struct CopyArgs {
 
 /// Represents the arguments for a move operation.
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
 pub struct MoveArgs {
     /// The path of the file to move lines from.
     pub source_file_path: String,
@@ -99,6 +103,7 @@ where
 
 /// Represents the arguments for the `edit_file` tool, which can handle multiple file creations and edits.
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
 pub struct FileOperationArgs {
     /// A list of patch operations to be applied to one or more existing files.
     #[serde(default, deserialize_with = "deserialize_null_default")]
@@ -126,7 +131,7 @@ pub fn edit_file_tool_schema() -> Tool {
         function: FunctionDescription {
             name: "edit_file".to_string(),
             description: Some(
-                "Creates, edits, copies, or moves files using a line-based protocol (LIF-Patch). It can perform multiple operations in a single call.
+                r#"Creates, edits, copies, or moves files using a line-based protocol (LIF-Patch). It can perform multiple operations in a single call.
 
 **Execution Order**: Operations are **always** executed in this fixed order: 1. `creates`, 2. `copies`, 3. `moves`, 4. `edits`.
 
@@ -139,11 +144,11 @@ pub fn edit_file_tool_schema() -> Tool {
 - **Edit File**: Use `edits` to apply low-level patches (insert/replace) to existing files.
 
 **Patch Operations for `edits`**:
-- **Replace/Delete**: `{\"op\":\"r\", \"startLid\":lid, \"endLid\":lid, \"content\":[\"new\"], \"contextBefore\":lid_content, \"contextAfter\":lid_content}`. To delete, provide an empty `content` array.
-- **Insert**: `{\"op\":\"i\", \"afterLid\":lid, \"content\":[\"new\"], \"contextBefore\":lid_content, \"contextAfter\":lid_content}`. Use `_START_OF_FILE_` for `afterLid` to insert at the beginning.
+- **Replace/Delete**: `{"op":"r", "start_lid":"...", "end_lid":"...", "content":["new"], "context_before":"...", "context_after":"..."}`. To delete, provide an empty `content` array.
+- **Insert**: `{"op":"i", "after_lid":"...", "content":["new"], "context_before":"...", "context_after":"..."}`. Use `_START_OF_FILE_` for `after_lid` to insert at the beginning.
 
 **Context for Safety**:
-The optional `contextBefore` and `contextAfter` fields are highly recommended. Provide the exact, unmodified content of the line immediately before `startLid` (for replace) or `afterLid` (for insert), and after `endLid` (for replace). This helps prevent errors if the file has changed in an unexpected way.
+The optional `context_before` and `context_after` fields are highly recommended. Provide the exact, unmodified content of the line immediately before `start_lid` (for replace) or `after_lid` (for insert), and after `end_lid` (for replace). This helps prevent errors if the file has changed in an unexpected way.
 
 **IMPORTANT**: You get the required `lif_hash` and LIDs from file attachments, a `read_file` call, or the result of a previous `edit_file` call (including file creation). After a successful edit, the LIDs of unchanged lines remain valid for subsequent edits. You DO NOT need to re-read the file. If you just edited or created a file, **use the new `lif_hash` from the result** for your next operation. Only use `read_file` if the file isn't in your context or an edit failed because of a hash mismatch.
 
@@ -156,7 +161,7 @@ The optional `contextBefore` and `contextAfter` fields are highly recommended. P
 - The `lif_hash` for an edit MUST match the hash from when the file was last read, attached or edited.
 
 **Example of a mixed operation**:
-`{\"creates\":[{\"file_path\":\"src/new_helper.rs\",\"content\":[\"pub fn helper() {}\"]}], \"moves\":[{\"source_file_path\":\"src/main.rs\",\"source_lif_hash\":\"a1b2c3d4\",\"start_lid\":\"LID1020\",\"end_lid\":\"LID1025\",\"dest_file_path\":\"src/new_helper.rs\",\"dest_lif_hash\":\"e5f6g7h8\",\"after_lid\":\"LID1000\"}],\"edits\":[{\"file_path\":\"src/main.rs\",\"lif_hash\":\"a1b2c3d4\",\"patch\":[{\"op\":\"i\",\"afterLid\":\"LID1000\",\"content\":[\"mod new_helper;\"]}]}]}`"
+`{"creates":[{"file_path":"src/new_helper.rs","content":["pub fn helper() {}"]}], "moves":[{"source_file_path":"src/main.rs","source_lif_hash":"a1b2c3d4","start_lid":"LID1020","end_lid":"LID1025","dest_file_path":"src/new_helper.rs","dest_lif_hash":"e5f6g7h8","after_lid":"LID1000"}],"edits":[{"file_path":"src/main.rs","lif_hash":"a1b2c3d4","patch":[{"op":"i","after_lid":"LID1000","content":["mod new_helper;"]}]}]}`"#
                     .to_string(),
             ),
             parameters: serde_json::json!({
@@ -206,24 +211,24 @@ The optional `contextBefore` and `contextAfter` fields are highly recommended. P
                                                 "description": "Replace a range of lines, like a 'diff hunk'. This is best for updating a whole function body or other logical block.",
                                                 "properties": {
                                                     "op": {"const": "r"},
-                                                    "startLid": {"type": "string", "description": "The starting line identifier. MUST be a string like 'LID1000'."},
-                                                    "endLid": {"type": "string", "description": "The ending line identifier. MUST be a string like 'LID2000'. For a single line, start_lid and end_lid are the same."},
+                                                    "start_lid": {"type": "string", "description": "The starting line identifier. MUST be a string like 'LID1000'."},
+                                                    "end_lid": {"type": "string", "description": "The ending line identifier. MUST be a string like 'LID2000'. For a single line, start_lid and end_lid are the same."},
                                                     "content": {"type": "array", "items": {"type": "string"}, "description": "The new lines of content to replace the specified range."},
-                                                    "contextBefore": {"type": "string", "description": "The exact content of the line immediately before startLid. Highly recommended for safety."},
-                                                    "contextAfter": {"type": "string", "description": "The exact content of the line immediately after endLid. Highly recommended for safety."}
+                                                    "context_before": {"type": "string", "description": "The exact content of the line immediately before start_lid. Highly recommended for safety."},
+                                                    "context_after": {"type": "string", "description": "The exact content of the line immediately after end_lid. Highly recommended for safety."}
                                                 },
-                                                "required": ["startLid", "endLid"]
+                                                "required": ["start_lid", "end_lid"]
                                             },
                                             {
-                                                "description": "Insert a new block of lines after a specific line. Use `_START_OF_FILE_` as the `afterLid` to insert at the top of the file.",
+                                                "description": "Insert a new block of lines after a specific line. Use `_START_OF_FILE_` as the `after_lid` to insert at the top of the file.",
                                                 "properties": {
                                                     "op": {"const": "i"},
-                                                    "afterLid": {"type": "string", "description": "The line identifier after which to insert. MUST be 'LID3000' or '_START_OF_FILE'."},
+                                                    "after_lid": {"type": "string", "description": "The line identifier after which to insert. MUST be 'LID3000' or '_START_OF_FILE'."},
                                                     "content": {"type": "array", "items": {"type": "string"}, "description": "The new lines of content to insert."},
-                                                    "contextBefore": {"type": "string", "description": "The exact content of the `afterLid` line. Highly recommended for safety."},
-                                                    "contextAfter": {"type": "string", "description": "The exact content of the line immediately after `afterLid`. Highly recommended for safety."}
+                                                    "context_before": {"type": "string", "description": "The exact content of the `after_lid` line. Highly recommended for safety."},
+                                                    "context_after": {"type": "string", "description": "The exact content of the line immediately after `after_lid`. Highly recommended for safety."}
                                                 },
-                                                "required": ["afterLid"]
+                                                "required": ["after_lid"]
                                             }
                                         ]
                                     }
@@ -1173,8 +1178,7 @@ mod tests {
         let result = execute_file_operations(&args, &mut manager, &editable_paths).unwrap();
         assert!(
             !result.contains("Error:"),
-            "Operation should succeed, but got {}",
-            result
+            "Operation should succeed, but got {result}"
         );
 
         let source_content = fs::read_to_string(&source_path).unwrap();

@@ -771,18 +771,18 @@ mod tests {
         [
             {
                 "op": "r",
-                "startLid": "LID1000",
-                "endLid": "LID2000",
+                "start_lid": "LID1000",
+                "end_lid": "LID2000",
                 "content": ["new content"],
-                "contextBefore": "optional context",
-                "contextAfter": null
+                "context_before": "optional context",
+                "context_after": null
             },
             {
                 "op": "i",
-                "afterLid": "LID3000",
+                "after_lid": "LID3000",
                 "content": ["inserted line 1", "inserted line 2"],
-                "contextBefore": null,
-                "contextAfter": "optional context 2"
+                "context_before": null,
+                "context_after": "optional context 2"
             }
         ]
         "#;
