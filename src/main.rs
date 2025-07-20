@@ -7,7 +7,9 @@ use openrouter_api::{
     utils,
 };
 use std::io::{self, Write};
+use std::thread;
 use std::time::Duration;
+use tokio::sync::mpsc;
 
 mod cli;
 mod config;
@@ -16,8 +18,8 @@ mod file_editor;
 mod file_reader;
 mod file_state;
 mod list_files;
-mod path_expander;
 mod patch;
+mod path_expander;
 mod prompt_builder;
 mod shell;
 mod streaming_executor;
@@ -102,6 +104,17 @@ async fn main() -> Result<()> {
         .with_timeout(Duration::from_secs(config.timeout_seconds))
         .with_api_key(api_key)?;
 
+    let (cancellation_tx, mut cancellation_rx) = mpsc::channel(1);
+    thread::spawn(move || {
+        let term = Term::stdout();
+        loop {
+            if term.read_key().is_ok_and(|key| key == Key::Escape) {
+                // Non-blocking send, ignore if the channel is full or disconnected
+                let _ = cancellation_tx.try_send(());
+            }
+        }
+    });
+
     println!("Model: {}", config.model);
 
     let system_message = Message {
@@ -136,8 +149,10 @@ async fn main() -> Result<()> {
         print!("{}", pretty_print_message(&user_message));
         messages.push(user_message);
 
+        let mut user_cancelled_request = false;
         'turn: for _i in 0..config.max_iterations {
-            let response_message_opt = loop {
+            let mut response_message_opt = None;
+            loop {
                 let request = ChatCompletionRequest {
                     model: config.model.clone(),
                     messages: messages.clone(),
@@ -149,21 +164,46 @@ async fn main() -> Result<()> {
                     transforms: None,
                 };
 
-                match streaming_executor::stream_and_collect_response(&or_client, request).await {
-                    Ok(response) => break Some(response),
-                    Err(e) => {
-                        eprintln!("\n{}", style(format!("API Connection Error: {e}")).red());
-                        match get_user_retry() {
-                            Ok(UserRetryAction::Retry) => continue,
-                            Ok(UserRetryAction::Cancel) => break None,
+                let api_call_future =
+                    streaming_executor::stream_and_collect_response(&or_client, request);
+
+                tokio::select! {
+                    biased; // Prioritize cancellation check
+
+                    _ = cancellation_rx.recv() => {
+                        println!("\n{}", style("Request cancelled by user.").yellow());
+                        user_cancelled_request = true;
+                        break;
+                    },
+
+                    result = api_call_future => {
+                        match result {
+                            Ok(response) => {
+                                response_message_opt = Some(response);
+                                break;
+                            }
                             Err(e) => {
-                                println!("Error reading input: {e:?}");
-                                break 'main_loop;
+                                eprintln!("\n{}", style(format!("API Connection Error: {e}")).red());
+                                match get_user_retry() {
+                                    Ok(UserRetryAction::Retry) => continue,
+                                    Ok(UserRetryAction::Cancel) => {
+                                        response_message_opt = None;
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        println!("Error reading input: {e:?}");
+                                        break 'main_loop;
+                                    }
+                                }
                             }
                         }
                     }
                 }
-            };
+            }
+
+            if user_cancelled_request {
+                break 'turn;
+            }
 
             if let Some(response_message) = response_message_opt.flatten() {
                 messages.push(response_message.clone());
