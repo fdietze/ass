@@ -17,6 +17,7 @@ pub struct Config {
     pub allowed_command_prefixes: Vec<String>,
     pub ignored_paths: Vec<String>,
     pub editable_paths: Vec<String>,
+    pub terminal_bell: bool,
 }
 
 impl Default for Config {
@@ -35,6 +36,7 @@ impl Default for Config {
             ],
             ignored_paths: vec![".git".to_string()],
             editable_paths: vec![".".to_string()],
+            terminal_bell: true,
         }
     }
 }
@@ -102,6 +104,10 @@ pub fn load_or_create() -> Result<Config> {
         } else {
             config.editable_paths
         },
+        // For boolean flags, we can just take the value from the deserialized
+        // config, as `serde(default)` will have already populated it from `Config::default()`
+        // if it was missing in the file.
+        terminal_bell: config.terminal_bell,
     };
 
     // If any values were missing, we can write the complete config back to the file

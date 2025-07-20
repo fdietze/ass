@@ -1,9 +1,11 @@
+use crate::config::Config;
 use console::style;
 use fancy_regex::Regex;
 use once_cell::sync::Lazy;
 use openrouter_api::types::chat::Message;
 use serde_json::Value;
 use std::fmt::Write;
+use std::io::{self, Write as IoWrite};
 
 static LIF_HEADER_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
@@ -118,6 +120,14 @@ pub fn pretty_print_json(json_string: &str) -> String {
             serde_json::to_string_pretty(&value).unwrap_or_else(|_| json_string.to_string())
         }
         Err(_) => json_string.to_string(),
+    }
+}
+
+/// If configured, prints the ASCII bell character to the terminal.
+pub fn ring_bell(config: &Config) {
+    if config.terminal_bell {
+        print!("\x07");
+        io::stdout().flush().unwrap_or(());
     }
 }
 

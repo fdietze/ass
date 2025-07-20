@@ -25,6 +25,7 @@ mod streaming_executor;
 mod tool_executor;
 mod ui;
 
+use crate::config::Config;
 use crate::file_state::FileStateManager;
 use crate::prompt_builder::expand_file_mentions;
 use crate::shell::shell_tool_schema;
@@ -40,7 +41,8 @@ pub enum UserRetryAction {
     Cancel,
 }
 
-fn get_user_confirmation() -> Result<UserAction> {
+fn get_user_confirmation(config: &Config) -> Result<UserAction> {
+    ui::ring_bell(config);
     let term = Term::stdout();
     let prompt = style("\nPress Enter to execute tool, or Esc to cancel...")
         .dim()
@@ -63,7 +65,8 @@ fn get_user_confirmation() -> Result<UserAction> {
     }
 }
 
-fn get_user_retry() -> Result<UserRetryAction> {
+fn get_user_retry(config: &Config) -> Result<UserRetryAction> {
+    ui::ring_bell(config);
     let term = Term::stdout();
     let prompt = style("Connection error. Press Enter to retry, or Esc to cancel...")
         .yellow()
@@ -189,7 +192,7 @@ async fn main() -> Result<()> {
                             }
                             Err(e) => {
                                 eprintln!("\n{}", style(format!("API Connection Error: {e}")).red());
-                                match get_user_retry() {
+                                match get_user_retry(&config) {
                                     Ok(UserRetryAction::Retry) => continue,
                                     Ok(UserRetryAction::Cancel) => {
                                         response_message_opt = None;
@@ -220,7 +223,7 @@ async fn main() -> Result<()> {
                         println!("\n[{}]", style(format!("tool: {function_name}")).magenta());
                         println!("{}", pretty_print_json(&tool_call.function_call.arguments));
 
-                        match get_user_confirmation() {
+                        match get_user_confirmation(&config) {
                             Ok(UserAction::Confirm) => {
                                 let tool_message = tool_executor::handle_tool_call(
                                     tool_call,
@@ -252,6 +255,8 @@ async fn main() -> Result<()> {
                 break 'turn;
             }
         }
+
+        ui::ring_bell(&config);
 
         loop {
             print!("user> ");
