@@ -259,24 +259,49 @@ pub fn is_creation_path_safe(path_to_create: &Path, editable_paths: &[String]) -
     Ok(())
 }
 
+/// Strips the `LID...: ` prefix from a line, if present.
+/// This makes the context check more robust, as the LLM often includes the LID
+/// in the context string.
+fn strip_lid_prefix(line: &str) -> &str {
+    if let Some(colon_pos) = line.find(':') {
+        let potential_lid = &line[..colon_pos];
+        if potential_lid.starts_with("LID")
+            && potential_lid[3..].chars().all(|c| c.is_ascii_digit())
+        {
+            // It looks like a LID. Skip the colon and any leading whitespace.
+            let after_colon = &line[colon_pos + 1..];
+            return after_colon.trim_start();
+        }
+    }
+    // If it doesn't look like it has a LID prefix, return the whole string.
+    line
+}
+
+/// Normalizes a string by collapsing and removing all whitespace.
+fn normalize_whitespace(s: &str) -> String {
+    s.split_whitespace().collect()
+}
+
 /// Verifies that the optional context lines in a patch operation match the actual file state.
 fn verify_patch_context(operation: &PatchOperation, file_state: &FileState) -> Result<()> {
     match operation {
         PatchOperation::Insert(op) => {
-            if let Some(ref expected_before) = op.context_before {
-                if op.after_lid == "_START_OF_FILE_" {
-                    // Context before _START_OF_FILE_ is not meaningful.
-                } else {
+            if let Some(ref provided_context_before) = op.context_before {
+                if op.after_lid != "_START_OF_FILE_" {
+                    let expected_content = strip_lid_prefix(provided_context_before);
                     let after_lid_num = FileState::parse_lid(&op.after_lid)?;
                     match file_state.lines.get(&after_lid_num) {
-                        Some(actual_line) if actual_line == expected_before => {}
                         Some(actual_line) => {
-                            return Err(anyhow!(
-                                "ContextBefore mismatch for insert after {}. Expected '{}', found '{}'",
-                                op.after_lid,
-                                expected_before,
-                                actual_line
-                            ));
+                            if normalize_whitespace(actual_line)
+                                != normalize_whitespace(expected_content)
+                            {
+                                return Err(anyhow!(
+                                    "ContextBefore mismatch for insert after {}. AI provided '{}', but file has '{}'. (Whitespace-insensitive comparison failed)",
+                                    op.after_lid,
+                                    provided_context_before.trim(),
+                                    actual_line.trim(),
+                                ));
+                            }
                         }
                         None => {
                             return Err(anyhow!(
@@ -287,29 +312,33 @@ fn verify_patch_context(operation: &PatchOperation, file_state: &FileState) -> R
                     }
                 }
             }
-            if let Some(ref expected_after) = op.context_after {
+            if let Some(ref provided_context_after) = op.context_after {
+                let expected_content = strip_lid_prefix(provided_context_after);
                 let after_lid_num = if op.after_lid == "_START_OF_FILE_" {
                     0
                 } else {
                     FileState::parse_lid(&op.after_lid)?
                 };
                 match file_state.lines.range(after_lid_num + 1..).next() {
-                    Some((_, actual_line)) if actual_line == expected_after => {}
                     Some((lid, actual_line)) => {
-                        return Err(anyhow!(
-                            "ContextAfter mismatch for insert after {}. Expected '{}', found '{}' at LID{}",
-                            op.after_lid,
-                            expected_after,
-                            actual_line,
-                            lid
-                        ));
+                        if normalize_whitespace(actual_line)
+                            != normalize_whitespace(expected_content)
+                        {
+                            return Err(anyhow!(
+                                "ContextAfter mismatch for insert after {}. AI provided '{}', but file has '{}' at LID{}. (Whitespace-insensitive comparison failed)",
+                                op.after_lid,
+                                provided_context_after.trim(),
+                                actual_line.trim(),
+                                lid
+                            ));
+                        }
                     }
                     None => {
-                        if !expected_after.is_empty() {
+                        if !expected_content.is_empty() {
                             // If we expect empty context at EOF, it's fine.
                             return Err(anyhow!(
-                                "ContextAfter mismatch: expected '{}' but found end of file.",
-                                expected_after
+                                "ContextAfter mismatch: AI provided '{}' but found end of file.",
+                                provided_context_after
                             ));
                         }
                     }
@@ -318,46 +347,54 @@ fn verify_patch_context(operation: &PatchOperation, file_state: &FileState) -> R
         }
         PatchOperation::Replace(op) => {
             let start_lid_num = FileState::parse_lid(&op.start_lid)?;
-            if let Some(ref expected_before) = op.context_before {
+            if let Some(ref provided_context_before) = op.context_before {
+                let expected_content = strip_lid_prefix(provided_context_before);
                 match file_state.lines.range(..start_lid_num).next_back() {
-                    Some((_, actual_line)) if actual_line == expected_before => {}
                     Some((lid, actual_line)) => {
-                        return Err(anyhow!(
-                            "ContextBefore mismatch at {}. Expected '{}', found '{}' at LID{}",
-                            op.start_lid,
-                            expected_before,
-                            actual_line,
-                            lid
-                        ));
+                        if normalize_whitespace(actual_line)
+                            != normalize_whitespace(expected_content)
+                        {
+                            return Err(anyhow!(
+                                "ContextBefore mismatch at {}. AI provided '{}', but file has '{}' at LID{}. (Whitespace-insensitive comparison failed)",
+                                op.start_lid,
+                                provided_context_before.trim(),
+                                actual_line.trim(),
+                                lid
+                            ));
+                        }
                     }
                     None => {
-                        if !expected_before.is_empty() {
+                        if !expected_content.is_empty() {
                             return Err(anyhow!(
-                                "ContextBefore mismatch: expected '{}' but found start of file.",
-                                expected_before
+                                "ContextBefore mismatch: AI provided '{}' but found start of file.",
+                                provided_context_before
                             ));
                         }
                     }
                 }
             }
             let end_lid_num = FileState::parse_lid(&op.end_lid)?;
-            if let Some(ref expected_after) = op.context_after {
+            if let Some(ref provided_context_after) = op.context_after {
+                let expected_content = strip_lid_prefix(provided_context_after);
                 match file_state.lines.range(end_lid_num + 1..).next() {
-                    Some((_, actual_line)) if actual_line == expected_after => {}
                     Some((lid, actual_line)) => {
-                        return Err(anyhow!(
-                            "ContextAfter mismatch at {}. Expected '{}', found '{}' at LID{}",
-                            op.end_lid,
-                            expected_after,
-                            actual_line,
-                            lid
-                        ));
+                        if normalize_whitespace(actual_line)
+                            != normalize_whitespace(expected_content)
+                        {
+                            return Err(anyhow!(
+                                "ContextAfter mismatch at {}. AI provided '{}', but file has '{}' at LID{}. (Whitespace-insensitive comparison failed)",
+                                op.end_lid,
+                                provided_context_after.trim(),
+                                actual_line.trim(),
+                                lid
+                            ));
+                        }
                     }
                     None => {
-                        if !expected_after.is_empty() {
+                        if !expected_content.is_empty() {
                             return Err(anyhow!(
-                                "ContextAfter mismatch: expected '{}' but found end of file.",
-                                expected_after
+                                "ContextAfter mismatch: AI provided '{}' but found end of file.",
+                                provided_context_after
                             ));
                         }
                     }
@@ -737,5 +774,82 @@ mod tests {
         // Ensure file was not changed
         let disk_content = fs::read_to_string(&file_path).unwrap();
         assert_eq!(disk_content, "line 1\nline 2\nline 3");
+    }
+
+    #[test]
+    fn test_execute_patch_with_lid_in_context() {
+        let (_tmp_dir, file_path) = setup_test_file("line 1\nline 3");
+        let mut manager = FileStateManager::new();
+        let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+
+        let initial_state = manager.open_file(&file_path).unwrap();
+        let initial_short_hash = initial_state.get_short_hash().to_string();
+
+        // The AI provides context with the LID prefix, which should now be handled.
+        let args = FileOperationArgs {
+            edits: vec![PatchArgs {
+                file_path: file_path.clone(),
+                lif_hash: initial_short_hash.clone(),
+                patch: vec![PatchOperation::Insert(InsertOperation {
+                    after_lid: "LID1000".to_string(),
+                    content: vec!["line 2".to_string()],
+                    context_before: Some("LID1000: line 1".to_string()), // Incorrectly includes LID
+                    context_after: Some("LID2000: line 3".to_string()),  // Incorrectly includes LID
+                })],
+            }],
+            creates: vec![],
+        };
+
+        let result = execute_file_operations(&args, &mut manager, &editable_paths);
+        assert!(result.is_ok(), "Operation should succeed");
+
+        let output = result.unwrap();
+        assert!(
+            !output.contains("Error:"),
+            "Result should not contain an error message, but was: {output}"
+        );
+        assert!(output.contains("Patch from hash"));
+
+        let disk_content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(disk_content, "line 1\nline 2\nline 3");
+    }
+
+    #[test]
+    fn test_execute_patch_with_whitespace_mismatch_in_context() {
+        // Setup a file with extra whitespace
+        let (_tmp_dir, file_path) = setup_test_file("line 1\n\n  line 3  ");
+        let mut manager = FileStateManager::new();
+        let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+
+        let initial_state = manager.open_file(&file_path).unwrap();
+        let initial_short_hash = initial_state.get_short_hash().to_string();
+
+        // The AI provides context with clean whitespace. This should succeed.
+        let args = FileOperationArgs {
+            edits: vec![PatchArgs {
+                file_path: file_path.clone(),
+                lif_hash: initial_short_hash.clone(),
+                patch: vec![PatchOperation::Replace(ReplaceOperation {
+                    start_lid: "LID2000".to_string(), // The empty line
+                    end_lid: "LID2000".to_string(),
+                    content: vec!["line 2".to_string()],
+                    context_before: Some("line 1".to_string()),
+                    context_after: Some("line 3".to_string()),
+                })],
+            }],
+            creates: vec![],
+        };
+
+        let result = execute_file_operations(&args, &mut manager, &editable_paths);
+        assert!(result.is_ok(), "Operation should succeed");
+
+        let output = result.unwrap();
+        assert!(
+            !output.contains("Error:"),
+            "Result should not contain an error message, but was: {output}"
+        );
+
+        let disk_content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(disk_content, "line 1\nline 2\n  line 3  ");
     }
 }
