@@ -5,10 +5,15 @@ use serde::Deserialize;
 use std::path::Path;
 
 #[derive(Deserialize, Debug)]
-pub struct FileReadArgs {
+pub struct FileReadSpec {
     pub file_path: String,
     pub start_line: Option<usize>,
     pub end_line: Option<usize>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct FileReadArgs {
+    pub files: Vec<FileReadSpec>,
 }
 
 pub fn read_file_tool_schema() -> Tool {
@@ -16,31 +21,45 @@ pub fn read_file_tool_schema() -> Tool {
         function: FunctionDescription {
             name: "read_file".to_string(),
             description: Some(
-                "Reads a file into context for viewing or editing. Provides content, line numbers, line IDs (LIDs), and a short hash.
-This should only be called in rare-cases: initial file reads, re-reads after 5 edits to refresh the context. LIDs are stable across edits.
-Example Output Format: `File: path/to/file.txt | Hash: a1b2c3d4 | Lines: 1-50/100`
-`1    LID1000: some content`
-`2    LID2000: some other content`
-IMPORTANT: The `edit_file` tool provides the new `lif_hash` after a successful edit. Attached files also provide this info. If you have this hash and the LIDs you need from the edit's diff, **don't read the file again**. Only use this tool for reading a file for the first time."
+                "Reads one or more files into context. Can read full files or specific line ranges.
+Each file's output is separated. If more than one file is requested, the output for each file will be preceded by a header.
+Example Output Format for multiple files:
+--- File: path/to/file1.txt ---
+File: path/to/file1.txt | Hash: a1b2c3d4 | Lines: 1-50/100
+1    LID1000: some content
+
+--- File: path/to/file2.txt ---
+Error reading file \"path/to/file2.txt\": file not found
+IMPORTANT: The `edit_file` tool provides the new `lif_hash` after a successful edit. If you have this hash and the necessary LIDs, **don't read the file again**. Only use this tool for initial reads."
                     .to_string(),
             ),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "The relative path to the file to be read."
-                    },
-                    "start_line": {
-                        "type": "integer",
-                        "description": "The 1-indexed, inclusive, starting line number. Defaults to the beginning of the file."
-                    },
-                    "end_line": {
-                        "type": "integer",
-                        "description": "The 1-indexed, inclusive, ending line number. Defaults to the end of the file."
+                    "files": {
+                        "type": "array",
+                        "description": "A list of files to read.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "file_path": {
+                                    "type": "string",
+                                    "description": "The relative path to the file to be read."
+                                },
+                                "start_line": {
+                                    "type": "integer",
+                                    "description": "The 1-indexed, inclusive, starting line number. Defaults to the beginning of the file."
+                                },
+                                "end_line": {
+                                    "type": "integer",
+                                    "description": "The 1-indexed, inclusive, ending line number. Defaults to the end of the file."
+                                }
+                            },
+                            "required": ["file_path"]
+                        }
                     }
                 },
-                "required": ["file_path"]
+                "required": ["files"]
             }),
         },
     }
@@ -51,13 +70,32 @@ pub fn execute_read_file(
     config: &Config,
     file_state_manager: &mut FileStateManager,
 ) -> Result<String> {
-    let path_to_read = Path::new(&args.file_path);
+    let mut outputs = Vec::new();
+    let multiple_files = args.files.len() > 1;
 
-    is_path_editable(path_to_read, &config.editable_paths)?;
+    for request in &args.files {
+        let file_path_str = &request.file_path;
 
-    let file_state = file_state_manager.open_file(&args.file_path)?;
+        let file_content_result: Result<String> = (|| {
+            let path_to_read = Path::new(file_path_str);
+            is_path_editable(path_to_read, &config.editable_paths)?;
+            let file_state = file_state_manager.open_file(file_path_str)?;
+            Ok(file_state.get_lif_string_for_range(request.start_line, request.end_line))
+        })();
 
-    Ok(file_state.get_lif_string_for_range(args.start_line, args.end_line))
+        let output = match file_content_result {
+            Ok(content) => content,
+            Err(e) => format!("Error reading file \"{file_path_str}\": {e}"),
+        };
+
+        if multiple_files {
+            outputs.push(format!("--- File: {file_path_str} ---\n{output}"));
+        } else {
+            outputs.push(output);
+        }
+    }
+
+    Ok(outputs.join("\n\n"))
 }
 
 #[cfg(test)]
@@ -83,9 +121,11 @@ mod tests {
             ..Default::default()
         };
         let args = FileReadArgs {
-            file_path: file_path.clone(),
-            start_line: None,
-            end_line: None,
+            files: vec![FileReadSpec {
+                file_path: file_path.clone(),
+                start_line: None,
+                end_line: None,
+            }],
         };
         let mut file_state_manager = FileStateManager::new();
 
@@ -109,9 +149,11 @@ mod tests {
             ..Default::default()
         };
         let args = FileReadArgs {
-            file_path: file_path.clone(),
-            start_line: Some(2),
-            end_line: Some(4),
+            files: vec![FileReadSpec {
+                file_path: file_path.clone(),
+                start_line: Some(2),
+                end_line: Some(4),
+            }],
         };
         let mut file_state_manager = FileStateManager::new();
 
@@ -125,6 +167,73 @@ mod tests {
     }
 
     #[test]
+    fn test_read_multiple_files() {
+        let (_tmp_dir, file_path1) = setup_test_file("file1 content");
+        let file_path2 = _tmp_dir.path().join("test_file2.txt");
+        std::fs::write(&file_path2, "file2 content").unwrap();
+
+        let config = Config {
+            editable_paths: vec![_tmp_dir.path().to_str().unwrap().to_string()],
+            ..Default::default()
+        };
+        let args = FileReadArgs {
+            files: vec![
+                FileReadSpec {
+                    file_path: file_path1.clone(),
+                    start_line: None,
+                    end_line: None,
+                },
+                FileReadSpec {
+                    file_path: file_path2.to_str().unwrap().to_string(),
+                    start_line: None,
+                    end_line: None,
+                },
+            ],
+        };
+        let mut file_state_manager = FileStateManager::new();
+
+        let result = execute_read_file(&args, &config, &mut file_state_manager).unwrap();
+
+        assert!(result.contains(&format!("--- File: {file_path1} ---")));
+        assert!(result.contains("file1 content"));
+        assert!(result.contains(&format!("--- File: {} ---", file_path2.to_str().unwrap())));
+        assert!(result.contains("file2 content"));
+    }
+
+    #[test]
+    fn test_read_multiple_with_error() {
+        let (_tmp_dir, file_path1) = setup_test_file("file1 content");
+        let non_existent_path = "non_existent_file.txt";
+
+        let config = Config {
+            editable_paths: vec![_tmp_dir.path().to_str().unwrap().to_string()],
+            ..Default::default()
+        };
+        let args = FileReadArgs {
+            files: vec![
+                FileReadSpec {
+                    file_path: file_path1.clone(),
+                    start_line: None,
+                    end_line: None,
+                },
+                FileReadSpec {
+                    file_path: non_existent_path.to_string(),
+                    start_line: None,
+                    end_line: None,
+                },
+            ],
+        };
+        let mut file_state_manager = FileStateManager::new();
+
+        let result = execute_read_file(&args, &config, &mut file_state_manager).unwrap();
+
+        assert!(result.contains(&format!("--- File: {file_path1} ---")));
+        assert!(result.contains("file1 content"));
+        assert!(result.contains(&format!("--- File: {non_existent_path} ---")));
+        assert!(result.contains("Error reading file"));
+    }
+
+    #[test]
     fn test_empty_file() {
         let (_tmp_dir, file_path_str) = setup_test_file("");
         let config = Config {
@@ -132,9 +241,11 @@ mod tests {
             ..Default::default()
         };
         let args = FileReadArgs {
-            file_path: file_path_str.clone(),
-            start_line: None,
-            end_line: None,
+            files: vec![FileReadSpec {
+                file_path: file_path_str.clone(),
+                start_line: None,
+                end_line: None,
+            }],
         };
         let mut file_state_manager = FileStateManager::new();
 
