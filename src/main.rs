@@ -33,6 +33,11 @@ pub enum UserAction {
     Cancel,
 }
 
+pub enum UserRetryAction {
+    Retry,
+    Cancel,
+}
+
 fn get_user_confirmation() -> Result<UserAction> {
     let term = Term::stdout();
     let prompt = style("\nPress Enter to execute tool, or Esc to cancel...")
@@ -50,6 +55,30 @@ fn get_user_confirmation() -> Result<UserAction> {
             Key::Escape => {
                 println!();
                 return Ok(UserAction::Cancel);
+            }
+            _ => {} // Ignore other keys
+        }
+    }
+}
+
+fn get_user_retry() -> Result<UserRetryAction> {
+    let term = Term::stdout();
+    let prompt = style("Connection error. Press Enter to retry, or Esc to cancel...")
+        .yellow()
+        .dim()
+        .to_string();
+    print!("\n{prompt}");
+    io::stdout().flush()?;
+
+    loop {
+        match term.read_key()? {
+            Key::Enter => {
+                println!();
+                return Ok(UserRetryAction::Retry);
+            }
+            Key::Escape => {
+                println!();
+                return Ok(UserRetryAction::Cancel);
             }
             _ => {} // Ignore other keys
         }
@@ -106,22 +135,36 @@ async fn main() -> Result<()> {
         print!("{}", pretty_print_message(&user_message));
         messages.push(user_message);
 
-        for _i in 0..config.max_iterations {
-            let request = ChatCompletionRequest {
-                model: config.model.clone(),
-                messages: messages.clone(),
-                tools: Some(tools.clone()),
-                stream: None,
-                response_format: None,
-                provider: None,
-                models: None,
-                transforms: None,
+        'turn: for _i in 0..config.max_iterations {
+            let response_message_opt = loop {
+                let request = ChatCompletionRequest {
+                    model: config.model.clone(),
+                    messages: messages.clone(),
+                    tools: Some(tools.clone()),
+                    stream: None,
+                    response_format: None,
+                    provider: None,
+                    models: None,
+                    transforms: None,
+                };
+
+                match streaming_executor::stream_and_collect_response(&or_client, request).await {
+                    Ok(response) => break Some(response),
+                    Err(e) => {
+                        eprintln!("\n{}", style(format!("API Connection Error: {e}")).red());
+                        match get_user_retry() {
+                            Ok(UserRetryAction::Retry) => continue,
+                            Ok(UserRetryAction::Cancel) => break None,
+                            Err(e) => {
+                                println!("Error reading input: {e:?}");
+                                break 'main_loop;
+                            }
+                        }
+                    }
+                }
             };
 
-            let response_message_opt =
-                streaming_executor::stream_and_collect_response(&or_client, request).await?;
-
-            if let Some(response_message) = response_message_opt {
+            if let Some(response_message) = response_message_opt.flatten() {
                 messages.push(response_message.clone());
 
                 if let Some(tool_calls) = &response_message.tool_calls {
@@ -152,15 +195,15 @@ async fn main() -> Result<()> {
                         }
                     }
                     if user_cancelled {
-                        break;
+                        break 'turn;
                     }
                 } else {
                     // If no tool call, the LLM is giving its final answer for this turn
-                    break;
+                    break 'turn;
                 }
             } else {
                 // If the response is empty, just break and prompt for user input
-                break;
+                break 'turn;
             }
         }
 

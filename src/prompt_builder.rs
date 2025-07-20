@@ -1,6 +1,7 @@
 use crate::{enricher, file_state::FileStateManager, path_expander};
 use anyhow::Result;
 use console::style;
+use std::path::Path;
 
 pub async fn expand_file_mentions(
     original_prompt: &str,
@@ -10,6 +11,25 @@ pub async fn expand_file_mentions(
     let enrichments = enricher::extract_enrichments(original_prompt);
     if enrichments.mentioned_files.is_empty() {
         return Ok(original_prompt.to_string());
+    }
+
+    let mut directory_listings = String::new();
+    for mentioned_path_str in &enrichments.mentioned_files {
+        let path = Path::new(mentioned_path_str);
+        if path.is_dir() {
+            let expansion = path_expander::expand_and_validate(
+                &[mentioned_path_str.clone()],
+                &config.ignored_paths,
+            );
+            if !expansion.files.is_empty() {
+                directory_listings.push_str(&format!(
+                    "\nAttached directory listing for `{mentioned_path_str}`:\n"
+                ));
+                for file in expansion.files {
+                    directory_listings.push_str(&format!("- {file}\n"));
+                }
+            }
+        }
     }
 
     let expansion_result =
@@ -39,12 +59,20 @@ pub async fn expand_file_mentions(
         }
     }
 
-    if attached_files_content.is_empty() && expansion_result.not_found.is_empty() {
+    if attached_files_content.is_empty()
+        && expansion_result.not_found.is_empty()
+        && directory_listings.is_empty()
+    {
         return Ok(original_prompt.to_string());
     }
 
     let mut final_prompt = String::new();
     final_prompt.push_str(original_prompt);
+
+    if !directory_listings.is_empty() {
+        final_prompt.push('\n');
+        final_prompt.push_str(&directory_listings);
+    }
 
     if !attached_files_content.is_empty() {
         final_prompt.push_str(&format!("\n\n{}\n", "Attached file contents:"));
