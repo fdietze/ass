@@ -27,14 +27,22 @@ pub fn pretty_print_message(message: &Message) -> String {
         let mut final_content = String::new();
 
         if should_collapse {
-            let mut last_match_end = 0;
-            for mat in LIF_HEADER_REGEX.find_iter(&message.content) {
-                let mat = mat.unwrap();
+            let mut last_processed_end = 0;
+            let mut search_offset = 0;
+
+            while let Some(mat) = LIF_HEADER_REGEX
+                .find(&message.content[search_offset..])
+                .unwrap()
+            {
+                let mat_start_in_full_string = mat.start() + search_offset;
+                let mat_end_in_full_string = mat.end() + search_offset;
+
                 // Append text between the last match and this one
-                final_content.push_str(&message.content[last_match_end..mat.start()]);
+                final_content
+                    .push_str(&message.content[last_processed_end..mat_start_in_full_string]);
 
                 let caps = LIF_HEADER_REGEX
-                    .captures(&message.content[mat.start()..])
+                    .captures(&message.content[mat_start_in_full_string..])
                     .unwrap()
                     .unwrap();
                 let path = &caps["path"];
@@ -50,11 +58,12 @@ pub fn pretty_print_message(message: &Message) -> String {
                 };
 
                 // The body content starts after the header line's newline.
-                let body_start = if let Some(pos) = message.content[mat.end()..].find('\n') {
-                    mat.end() + pos + 1
-                } else {
-                    message.content.len()
-                };
+                let body_start =
+                    if let Some(pos) = message.content[mat_end_in_full_string..].find('\n') {
+                        mat_end_in_full_string + pos + 1
+                    } else {
+                        message.content.len()
+                    };
 
                 let content_end = if num_lines_in_body == 0 {
                     // For empty files or files with only a header, the "content" ends right after the header's newline.
@@ -73,10 +82,11 @@ pub fn pretty_print_message(message: &Message) -> String {
                 let summary = format!("[File: {path} | Hash: {hash} | {total_lines} lines]");
                 final_content.push_str(&summary);
 
-                last_match_end = content_end;
+                last_processed_end = content_end;
+                search_offset = content_end;
             }
             // Append any remaining text after the last match
-            final_content.push_str(&message.content[last_match_end..]);
+            final_content.push_str(&message.content[last_processed_end..]);
         } else {
             final_content.push_str(&message.content);
         }
@@ -172,7 +182,7 @@ mod tests {
         // --- Arrange ---
         let tmp_dir = Builder::new().prefix("test-delimiter-").tempdir().unwrap();
         let file_path = tmp_dir.path().join("file_with_delimiter.rs");
-        let file_content = "line 1\nconst FAKE_HEADER: &str = \"File: fake/path.rs | Hash: fakehash | Lines: 1-1/1\";\nline 3";
+        let file_content = "line 1\nconst FAKE_HEADER: &str = \"File: fake/path.rs | Hash: 1234abcd | Lines: 1-1/1\";\nline 3";
         fs::write(&file_path, file_content).unwrap();
 
         let config = Config::default();
