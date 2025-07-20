@@ -542,7 +542,7 @@ impl FileStateManager {
             if !canonical_path.is_file() {
                 return Err(anyhow!("Path is not a file: {}", canonical_path.display()));
             }
-            let content = fs::read_to_string(&canonical_path).unwrap_or_default();
+            let content = fs::read_to_string(&canonical_path)?;
             let file_state = FileState::new(canonical_path, &content);
             self.open_files.insert(canonical_key.clone(), file_state);
         }
