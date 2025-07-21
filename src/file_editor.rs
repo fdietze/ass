@@ -123,13 +123,14 @@ pub fn edit_file_tool_schema() -> Tool {
 
 **State Chaining**: This tool supports chaining operations. If you copy code into `file_b.rs` and then want to edit `file_b.rs` in the same call, you can. Just provide the `lif_hash` for `file_b.rs` that you had *before* this call. The tool is smart enough to apply the subsequent edit to the *intermediate* state of the file after the copy. You only need to re-read a file if an operation fails with a hash mismatch, which indicates the file was changed by an external process.
 
+**Moves are preferred over edits**: Prefer move operations over edits where possible to avoid llm spelling mistakes and save llm tokens. Especially when moving large chunks of code, this is very important.
+
 **Operations**:
 - **Copy Lines**: Use `copies` to copy a range of lines from a source file to a destination file.
 - **Move Lines**: Use `moves` to move a range of lines. This is a copy followed by a delete from the source.
 - **Edit File**: Use `edits` to apply low-level patches (insert/replace) to existing files.
 
 **Patch Operations for `edits`**:
-- Prefer move operations over edits where possible to avoid making spelling mistakes.
 - **Replace/Delete**: `{"op":"r", "start_lid":"...", "end_lid":"...", "content":["new"], "context_before":"...", "context_after":"..."}`. To delete, provide an empty `content` array.
 - **Insert**: `{"op":"i", "after_lid":"...", "content":["new"], "context_before":"...", "context_after":"..."}`. Use `_START_OF_FILE_` for `after_lid` to insert at the beginning.
 
