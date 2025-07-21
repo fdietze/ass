@@ -129,6 +129,7 @@ pub fn edit_file_tool_schema() -> Tool {
 - **Edit File**: Use `edits` to apply low-level patches (insert/replace) to existing files.
 
 **Patch Operations for `edits`**:
+- Prefer move operations over edits where possible to avoid making spelling mistakes.
 - **Replace/Delete**: `{"op":"r", "start_lid":"...", "end_lid":"...", "content":["new"], "context_before":"...", "context_after":"..."}`. To delete, provide an empty `content` array.
 - **Insert**: `{"op":"i", "after_lid":"...", "content":["new"], "context_before":"...", "context_after":"..."}`. Use `_START_OF_FILE_` for `after_lid` to insert at the beginning.
 

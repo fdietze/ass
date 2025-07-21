@@ -35,7 +35,9 @@ pub fn create_file_tool_schema() -> Tool {
             description: Some(
                 "Creates one or more new files with specified content.
 This operation is atomic: if any file creation fails, no files from the batch are created.
-Returns the LIF representation (content with LIDs and a lif_hash) for each successfully created file. This information is required for any subsequent edits to the new files within the same session."
+Returns the LIF representation (content with LIDs and a lif_hash) for each successfully created file. This information is required for any subsequent edits to the new files within the same session.
+If the file content comes from another file, instead of creating a file with the content, create an empty file and then use the move operation to move specific lines from the source file to the new file.
+"
                     .to_string(),
             ),
             parameters: serde_json::json!({
