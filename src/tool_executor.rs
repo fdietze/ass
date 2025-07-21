@@ -1,5 +1,6 @@
 use crate::{
     config::Config,
+    file_creator::{CreateFileArgs, execute_create_files},
     file_editor::{FileOperationArgs, execute_file_operations},
     file_reader::{FileReadArgs, execute_read_file},
     file_state::FileStateManager,
@@ -34,6 +35,34 @@ pub fn handle_tool_call(
                 Ok(output) => (output.clone(), strip_str(&output)),
                 Err(e) => {
                     let error_msg = format!("Error executing command: {e}");
+                    (style(error_msg.clone()).red().to_string(), error_msg)
+                }
+            };
+
+            println!("{colored_output}");
+            Message {
+                role: "tool".to_string(),
+                content: uncolored_output,
+                name: Some(function_name.clone()),
+                tool_call_id,
+                tool_calls: None,
+            }
+        }
+        "create_file" => {
+            let result =
+                match serde_json::from_str::<CreateFileArgs>(&tool_call.function_call.arguments) {
+                    Ok(args) => {
+                        execute_create_files(&args, file_state_manager, &config.editable_paths)
+                    }
+                    Err(e) => Err(anyhow::anyhow!(
+                        "Error: Invalid arguments provided for {function_name}: {e}"
+                    )),
+                };
+
+            let (colored_output, uncolored_output) = match result {
+                Ok(output) => (output.clone(), strip_str(&output)),
+                Err(e) => {
+                    let error_msg = format!("Error creating file: {e}");
                     (style(error_msg.clone()).red().to_string(), error_msg)
                 }
             };

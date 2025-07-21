@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 mod cli;
 mod config;
 mod enricher;
+mod file_creator;
 mod file_editor;
 mod file_reader;
 mod file_state;
@@ -122,6 +123,7 @@ async fn main() -> Result<()> {
 
     let tools = vec![
         shell_tool_schema(),
+        file_creator::create_file_tool_schema(),
         file_editor::edit_file_tool_schema(),
         file_reader::read_file_tool_schema(),
         list_files::list_files_tool_schema(),
