@@ -1,5 +1,5 @@
-use std::collections::{BTreeMap, BTreeSet};
 use console::style;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub fn generate_custom_diff(
     old_lines: &BTreeMap<u64, String>,

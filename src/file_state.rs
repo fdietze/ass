@@ -21,10 +21,10 @@
 //! -   **`PatchOperation`**: A set of commands (`insert`, `replace_range`) that describe an edit.
 //! -   **`lif_hash`**: A SHA-1 hash of the file's LIF representation, acting as a version identifier.
 
+use crate::diff;
 use crate::patch::PatchOperation;
 use anyhow::{Result, anyhow};
 use sha1::{Digest, Sha1};
-use crate::diff;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::PathBuf;
@@ -420,8 +420,8 @@ impl FileStateManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use console::style;
     use crate::patch::{InsertOperation, ReplaceOperation};
+    use console::style;
     use tempfile::Builder;
 
     fn setup_test_file(content: &str) -> (tempfile::TempDir, PathBuf) {
@@ -761,7 +761,6 @@ mod tests {
             "line 1\ninserted after 1\nanother insertion\nreplacement"
         );
     }
-
 
     #[test]
     fn test_patch_replace_invalid_range_start_after_end() {
