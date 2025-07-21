@@ -79,7 +79,8 @@ pub fn execute_read_file(
         let file_content_result: Result<String> = (|| {
             let path_to_read = Path::new(file_path_str);
             is_path_editable(path_to_read, &config.editable_paths)?;
-            let file_state = file_state_manager.open_file(file_path_str)?;
+            // Always force a reload from disk to ensure the content is fresh
+            let file_state = file_state_manager.force_reload_file(file_path_str)?;
             Ok(file_state.get_lif_string_for_range(request.start_line, request.end_line))
         })();
 
@@ -111,6 +112,40 @@ mod tests {
         let mut file = std::fs::File::create(&file_path).unwrap();
         write!(file, "{content}").unwrap();
         (tmp_dir, file_path.to_str().unwrap().to_string())
+    }
+
+    #[test]
+    fn test_read_always_reloads_from_disk() {
+        let (_tmp_dir, file_path) = setup_test_file("initial content");
+        let config = Config {
+            editable_paths: vec![_tmp_dir.path().to_str().unwrap().to_string()],
+            ..Default::default()
+        };
+        let args = FileReadArgs {
+            files: vec![FileReadSpec {
+                file_path: file_path.clone(),
+                start_line: None,
+                end_line: None,
+            }],
+        };
+        let mut file_state_manager = FileStateManager::new();
+
+        // First read
+        let result1 = execute_read_file(&args, &config, &mut file_state_manager).unwrap();
+        assert!(result1.contains("initial content"));
+
+        // Modify the file on disk
+        std::fs::write(&file_path, "updated content").unwrap();
+
+        // Second read should show the updated content
+        let result2 = execute_read_file(&args, &config, &mut file_state_manager).unwrap();
+        assert!(result2.contains("updated content"));
+        assert!(!result2.contains("initial content"));
+
+        // The hash should also be different
+        let initial_hash_line = result1.lines().find(|l| l.contains("Hash:")).unwrap();
+        let updated_hash_line = result2.lines().find(|l| l.contains("Hash:")).unwrap();
+        assert_ne!(initial_hash_line, updated_hash_line);
     }
 
     #[test]

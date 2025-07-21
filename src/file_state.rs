@@ -545,6 +545,24 @@ impl FileStateManager {
 
         Ok(self.open_files.get_mut(&canonical_key).unwrap())
     }
+
+    /// Forces a re-read of the file from disk, overwriting any cached state.
+    /// This ensures that the returned `FileState` is perfectly up-to-date with
+    /// the filesystem, with freshly assigned LIDs.
+    pub fn force_reload_file(&mut self, path_str: &str) -> Result<&mut FileState> {
+        let canonical_path = fs::canonicalize(path_str)?;
+        let canonical_key = canonical_path.to_string_lossy().to_string();
+
+        if !canonical_path.is_file() {
+            return Err(anyhow!("Path is not a file: {}", canonical_path.display()));
+        }
+
+        let content = fs::read_to_string(&canonical_path)?;
+        let file_state = FileState::new(canonical_path, &content);
+        self.open_files.insert(canonical_key.clone(), file_state);
+
+        Ok(self.open_files.get_mut(&canonical_key).unwrap())
+    }
 }
 
 #[cfg(test)]
@@ -574,6 +592,35 @@ mod tests {
                 .to_string()
                 .contains("Path is not a file")
         );
+    }
+
+    #[test]
+    fn test_state_manager_force_reload() {
+        let (_tmp_dir, file_path) = setup_test_file("initial");
+        let file_path_str = file_path.to_str().unwrap();
+        let mut manager = FileStateManager::new();
+
+        // First open, reads from disk
+        let state1 = manager.open_file(file_path_str).unwrap();
+        assert_eq!(state1.get_full_content(), "initial");
+        let original_hash = state1.lif_hash.clone();
+
+        // Modify file on disk
+        fs::write(&file_path, "updated").unwrap();
+
+        // open_file should return the cached version
+        let state2 = manager.open_file(file_path_str).unwrap();
+        assert_eq!(state2.get_full_content(), "initial");
+        assert_eq!(state2.lif_hash, original_hash);
+
+        // force_reload_file should read from disk
+        let state3 = manager.force_reload_file(file_path_str).unwrap();
+        assert_eq!(state3.get_full_content(), "updated");
+        assert_ne!(state3.lif_hash, original_hash);
+
+        // And now a normal open_file should see the reloaded state
+        let state4 = manager.open_file(file_path_str).unwrap();
+        assert_eq!(state4.get_full_content(), "updated");
     }
 
     #[test]
