@@ -13,6 +13,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 mod cli;
+mod diff;
 mod config;
 mod enricher;
 mod file_creator;
