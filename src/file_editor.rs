@@ -19,7 +19,8 @@
 //! 4.  **Diff Generation**: After a patch is successfully applied, it generates a human-readable
 //!     diff of the changes, which is then returned to the LLM and displayed to the user.
 
-use crate::file_state::{FileState, FileStateManager};
+use crate::file_state::FileState;
+use crate::file_state_manager::FileStateManager;
 use crate::patch::{PatchOperation, ReplaceOperation};
 use anyhow::{Result, anyhow};
 use openrouter_api::models::tool::{FunctionDescription, Tool};
@@ -680,7 +681,7 @@ pub fn execute_file_operations(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::file_state::FileStateManager;
+    use crate::file_state_manager::FileStateManager;
     use crate::patch::{InsertOperation, PatchOperation, ReplaceOperation};
     use std::fs;
     use tempfile::Builder;

@@ -135,7 +135,7 @@ pub fn ring_bell(config: &Config) {
 mod tests {
     use super::*;
     use crate::{
-        config::Config, file_state::FileStateManager, prompt_builder::expand_file_mentions,
+        config::Config, file_state_manager::FileStateManager, prompt_builder::expand_file_mentions,
     };
     use std::fs;
     use tempfile::Builder;

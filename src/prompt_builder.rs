@@ -1,4 +1,4 @@
-use crate::{enricher, file_state::FileStateManager, path_expander};
+use crate::{enricher, file_state_manager::FileStateManager, path_expander};
 use anyhow::Result;
 use console::style;
 use std::path::Path;

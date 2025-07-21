@@ -1,4 +1,4 @@
-use crate::{config::Config, file_editor::is_path_editable, file_state::FileStateManager};
+use crate::{config::Config, file_editor::is_path_editable, file_state_manager::FileStateManager};
 use anyhow::Result;
 use openrouter_api::models::tool::{FunctionDescription, Tool};
 use serde::Deserialize;

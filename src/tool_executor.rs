@@ -3,7 +3,7 @@ use crate::{
     file_creator::{CreateFileArgs, execute_create_files},
     file_editor::{FileOperationArgs, execute_file_operations},
     file_reader::{FileReadArgs, execute_read_file},
-    file_state::FileStateManager,
+    file_state_manager::FileStateManager,
     list_files::{ListFilesArgs, execute_list_files},
     shell::{ShellCommandArgs, execute_shell_command},
 };

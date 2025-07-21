@@ -20,6 +20,7 @@ mod file_creator;
 mod file_editor;
 mod file_reader;
 mod file_state;
+mod file_state_manager;
 mod list_files;
 mod patch;
 mod path_expander;
@@ -30,7 +31,7 @@ mod tool_executor;
 mod ui;
 
 use crate::config::Config;
-use crate::file_state::FileStateManager;
+use crate::file_state_manager::FileStateManager;
 use crate::prompt_builder::expand_file_mentions;
 use crate::shell::shell_tool_schema;
 use crate::ui::{pretty_print_json, pretty_print_message};

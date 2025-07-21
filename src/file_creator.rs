@@ -3,7 +3,7 @@
 //! This module provides the `create_file` tool, allowing the agent to create new files.
 
 use crate::file_editor::is_creation_path_safe;
-use crate::file_state::FileStateManager;
+use crate::file_state_manager::FileStateManager;
 use anyhow::{Result, anyhow};
 use openrouter_api::models::tool::{FunctionDescription, Tool};
 use serde::Deserialize;
@@ -114,7 +114,7 @@ pub fn execute_create_files(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::file_state::FileStateManager;
+    use crate::file_state_manager::FileStateManager;
     use std::fs;
     use tempfile::Builder;
 
