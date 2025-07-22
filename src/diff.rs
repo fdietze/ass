@@ -1,176 +1,96 @@
 use console::style;
 use fractional_index::FractionalIndex;
-use std::collections::{BTreeMap, BTreeSet};
+use similar::{DiffTag, TextDiff};
+use std::collections::BTreeMap;
 
 pub fn generate_custom_diff(
     old_lines: &BTreeMap<FractionalIndex, String>,
     new_lines: &BTreeMap<FractionalIndex, String>,
 ) -> String {
-    let old_keys: BTreeSet<_> = old_lines.keys().cloned().collect();
-    let new_keys: BTreeSet<_> = new_lines.keys().cloned().collect();
-
-    let modified_keys: BTreeSet<_> = old_keys
-        .intersection(&new_keys)
-        .filter(|&k| old_lines.get(k) != new_lines.get(k))
-        .cloned()
-        .collect();
-
-    let changed_keys: BTreeSet<_> = old_keys
-        .symmetric_difference(&new_keys)
-        .cloned()
-        .collect::<BTreeSet<_>>()
-        .union(&modified_keys)
-        .cloned()
-        .collect();
-
-    if changed_keys.is_empty() {
+    if old_lines == new_lines {
         return "No changes detected.".to_string();
     }
 
+    let old_keys: Vec<_> = old_lines.keys().cloned().collect();
+    let old_content: Vec<_> = old_lines.values().map(String::as_str).collect();
+    let new_keys: Vec<_> = new_lines.keys().cloned().collect();
+    let new_content: Vec<_> = new_lines.values().map(String::as_str).collect();
+
     const CONTEXT_LINES: usize = 2;
+    let diff = TextDiff::from_slices(&old_content, &new_content);
+
     let mut diff_lines = Vec::new();
-    let all_keys: Vec<_> = old_keys.union(&new_keys).cloned().collect();
 
-    // 1. Identify hunks (contiguous blocks of changed keys)
-    let mut hunks: Vec<(usize, usize)> = vec![];
-    if !all_keys.is_empty() {
+    for (hunk_idx, group) in diff.grouped_ops(CONTEXT_LINES).iter().enumerate() {
+        if hunk_idx > 0 {
+            diff_lines.push("...".to_string());
+        }
+
+        let ops: Vec<_> = group.iter().collect();
         let mut i = 0;
-        while i < all_keys.len() {
-            if changed_keys.contains(&all_keys[i]) {
-                let start = i;
-                while i < all_keys.len() && changed_keys.contains(&all_keys[i]) {
-                    i += 1;
-                }
-                hunks.push((start, i));
-            } else {
-                i += 1;
-            }
-        }
-    }
+        while i < ops.len() {
+            let op = ops[i];
 
-    // If there are no hunks, but there are changes, it's a logic error.
-    // But if there are no changes, we should have already returned.
-    // If there are hunks, proceed.
-    if hunks.is_empty() && !changed_keys.is_empty() {
-        // This case can happen if, for example, a whitespace-only change is the ONLY change.
-        // The old logic for whitespace changes was to treat them as additions, which the new logic
-        // will now handle inside the hunk processing. Let's find the modified key.
-        if let Some(key) = modified_keys.iter().next() {
-            if let Some(idx) = all_keys.iter().position(|r| r == key) {
-                hunks.push((idx, idx + 1));
-            }
-        }
+            // Default processing if not a whitespace-only modification.
+            let (tag, old_range, new_range) = (op.tag(), op.old_range(), op.new_range());
+            match tag {
+                DiffTag::Replace => {
+                    if old_range.len() == 1 && new_range.len() == 1 {
+                        let old_line = old_content[old_range.start];
+                        let new_line = new_content[new_range.start];
+                        let old_normalized: String = old_line.split_whitespace().collect();
+                        let new_normalized: String = new_line.split_whitespace().collect();
 
-        // If still no hunks, it's an unexpected state. Return a simple list of changes.
-        if hunks.is_empty() {
-            let mut removals = Vec::new();
-            let mut additions = Vec::new();
-            for key in &changed_keys {
-                if let Some(line) = old_lines.get(key) {
-                    removals.push(
-                        style(format!("- {}: {line}", key.to_string()))
-                            .red()
-                            .to_string(),
-                    );
-                }
-                if let Some(line) = new_lines.get(key) {
-                    additions.push(
-                        style(format!("+ {}: {line}", key.to_string()))
-                            .green()
-                            .to_string(),
-                    );
-                }
-            }
-            removals.extend(additions);
-            return removals.join("\n");
-        }
-    }
+                        if old_normalized == new_normalized {
+                            // Whitespace-only change found. Print the new line as neutral.
+                            diff_lines.push(format!("  {}: {}", new_keys[new_range.start].to_string(), new_line));
+                            i += 1;
+                            continue;
+                        }
+                    }
 
-    // 2. Render hunks with context
-    let mut last_printed_index: Option<usize> = None;
-
-    for (hunk_start, hunk_end) in hunks {
-        let context_start = hunk_start.saturating_sub(CONTEXT_LINES);
-        let print_start = if let Some(last_idx) = last_printed_index {
-            // If the new hunk's context overlaps with or is adjacent to the last one,
-            // we start right after the last printed line.
-            // Otherwise, we print a separator.
-            if context_start > last_idx {
-                diff_lines.push("...".to_string());
-                context_start
-            } else {
-                last_idx
-            }
-        } else {
-            context_start
-        };
-
-        // Pre-hunk context
-        for key in all_keys.iter().take(hunk_start).skip(print_start) {
-            if let Some(line) = new_lines.get(key) {
-                diff_lines.push(format!("  {}: {line}", key.to_string()));
-            }
-        }
-
-        // The hunk itself
-        let mut hunk_removals = Vec::new();
-        let mut hunk_additions = Vec::new();
-        for key in all_keys.iter().take(hunk_end).skip(hunk_start) {
-            let old_val = old_lines.get(key);
-            let new_val = new_lines.get(key);
-            match (old_val, new_val) {
-                (Some(ov), Some(nv)) => {
-                    // Modified
-                    let old_normalized: String = ov.split_whitespace().collect();
-                    let new_normalized: String = nv.split_whitespace().collect();
-
-                    if old_normalized == new_normalized {
-                        hunk_additions.push(format!("  {}: {nv}", key.to_string()));
-                    } else {
-                        hunk_removals.push(
-                            style(format!("- {}: {ov}", key.to_string()))
+                    for i in old_range {
+                        diff_lines.push(
+                            style(format!("- {}: {}", old_keys[i].to_string(), old_content[i]))
                                 .red()
                                 .to_string(),
                         );
-                        hunk_additions.push(
-                            style(format!("+ {}: {nv}", key.to_string()))
+                    }
+                    for i in new_range {
+                        diff_lines.push(
+                            style(format!("+ {}: {}", new_keys[i].to_string(), new_content[i]))
                                 .green()
                                 .to_string(),
                         );
                     }
                 }
-                (Some(ov), None) => {
-                    // Deleted
-                    hunk_removals.push(
-                        style(format!("- {}: {ov}", key.to_string()))
-                            .red()
-                            .to_string(),
-                    );
+                DiffTag::Delete => {
+                    for i in old_range {
+                        diff_lines.push(
+                            style(format!("- {}: {}", old_keys[i].to_string(), old_content[i]))
+                                .red()
+                                .to_string(),
+                        );
+                    }
                 }
-                (None, Some(nv)) => {
-                    // Added
-                    hunk_additions.push(
-                        style(format!("+ {}: {nv}", key.to_string()))
-                            .green()
-                            .to_string(),
-                    );
+                DiffTag::Insert => {
+                    for i in new_range {
+                        diff_lines.push(
+                            style(format!("+ {}: {}", new_keys[i].to_string(), new_content[i]))
+                                .green()
+                                .to_string(),
+                        );
+                    }
                 }
-                (None, None) => unreachable!(),
+                DiffTag::Equal => {
+                    for i in new_range {
+                        diff_lines.push(format!("  {}: {}", new_keys[i].to_string(), new_content[i]));
+                    }
+                }
             }
+            i += 1;
         }
-        diff_lines.extend(hunk_removals);
-        diff_lines.extend(hunk_additions);
-
-        // Post-hunk context
-        let context_end = (hunk_end + CONTEXT_LINES).min(all_keys.len());
-        for key in all_keys.iter().take(context_end).skip(hunk_end) {
-            if let Some(line) = new_lines.get(key) {
-                diff_lines.push(format!("  {}: {line}", key.to_string()));
-            }
-        }
-        last_printed_index = Some(context_end);
     }
-
     diff_lines.join("\n")
 }
 
