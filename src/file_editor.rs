@@ -149,7 +149,7 @@ File: b.rs | Hash: h2 | Lines: 1-1/1
 1    10: // File b
 ```
 To move `fn main() {}` from `a.rs` to `b.rs` and add `use b;` to `a.rs`, you would call `edit_file` like this:
-`{"moves":[{"source_file_path":"a.rs","source_lif_hash":"h1","source_start_lid":"40","source_end_lid":"40","dest_file_path":"b.rs","dest_lif_hash":"h2","dest_after_lid":"10"}],"edits":[{"file_path":"a.rs","lif_hash":"h1","patch":[{"op":"i","after_lid":"20","content":["use b;"]}]}]}`
+`{"moves":[{"source_file_path":"a.rs","source_lif_hash":"h1","source_start_lid":"40","source_end_lid":"40","dest_file_path":"b.rs","dest_lif_hash":"h2","dest_after_lid":"10"}],"edits":[{"file_path":"a.rs","lif_hash":"h1","patch":[{"op":"i","after_lid":"20","context_before":"// File a","content":["use b;"],"context_after":"fn main() {}"}]}]}`
 "#
                     .to_string(),
             ),
