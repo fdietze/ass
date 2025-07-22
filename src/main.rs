@@ -19,6 +19,7 @@ mod enricher;
 mod file_creator;
 mod file_editor;
 mod file_reader;
+mod file_editor_tests;
 mod file_state;
 mod file_state_manager;
 mod list_files;
