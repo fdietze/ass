@@ -21,13 +21,18 @@ mod tests {
 
         let initial_state = manager.open_file(&file_path).unwrap();
         let initial_short_hash = initial_state.get_short_hash().to_string();
+        let initial_indexes = initial_state
+            .lines
+            .keys()
+            .map(|k| k.to_string())
+            .collect::<Vec<_>>();
 
         let args = FileOperationArgs {
             edits: vec![PatchArgs {
                 file_path: file_path.clone(),
                 lif_hash: initial_short_hash.clone(),
                 patch: vec![PatchOperation::Insert(InsertOperation {
-                    after_lid: "LID1000".to_string(),
+                    after_lid: initial_indexes[0].clone(),
                     content: vec!["line 2".to_string()],
                     context_before: Some("line 1".to_string()),
                     context_after: Some("line 3".to_string()),
@@ -79,16 +84,21 @@ mod tests {
     #[test]
     fn test_execute_multiple_patches_with_partial_failure() {
         // --- Setup ---
-        let (_tmp_dir, file1_path) = setup_test_file("file1 line1");
-        let file2_path = _tmp_dir.path().join("file2.txt");
+        let (tmp_dir, file1_path) = setup_test_file("file1 line1");
+        let file2_path = tmp_dir.path().join("file2.txt");
         fs::write(&file2_path, "file2 line1").unwrap();
         let file2_path_str = file2_path.to_str().unwrap().to_string();
 
         let mut manager = FileStateManager::new();
-        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+        let accessible_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
 
         let file1_initial_state = manager.open_file(&file1_path).unwrap();
         let file1_initial_hash = file1_initial_state.get_short_hash().to_string();
+        let file1_initial_indexes = file1_initial_state
+            .lines
+            .keys()
+            .map(|k| k.to_string())
+            .collect::<Vec<_>>();
 
         let file2_initial_state = manager.open_file(&file2_path_str).unwrap();
         let file2_initial_hash = file2_initial_state.get_short_hash().to_string();
@@ -99,7 +109,7 @@ mod tests {
             file_path: file1_path.clone(),
             lif_hash: file1_initial_hash,
             patch: vec![PatchOperation::Insert(InsertOperation {
-                after_lid: "LID1000".to_string(),
+                after_lid: file1_initial_indexes[0].clone(),
                 content: vec!["file1 line2".to_string()],
                 context_before: Some("file1 line1".to_string()),
                 context_after: None,
@@ -145,6 +155,106 @@ mod tests {
     }
 
     #[test]
+    fn test_copy_intra_file() {
+        let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2\nline 3");
+        let mut manager = FileStateManager::new();
+        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+
+        let initial_state = manager.open_file(&file_path).unwrap();
+        let initial_hash = initial_state.get_short_hash().to_string();
+        let initial_indexes = initial_state
+            .lines
+            .keys()
+            .map(|k| k.to_string())
+            .collect::<Vec<_>>();
+
+        let args = FileOperationArgs {
+            copies: vec![CopyArgs {
+                source_file_path: file_path.clone(),
+                source_lif_hash: initial_hash.clone(),
+                source_start_lid: initial_indexes[0].clone(),
+                source_end_lid: initial_indexes[0].clone(),
+                dest_file_path: file_path.clone(),
+                dest_lif_hash: initial_hash,
+                dest_after_lid: initial_indexes[2].clone(),
+            }],
+            edits: vec![],
+            moves: vec![],
+        };
+
+        let result = execute_file_operations(&args, &mut manager, &accessible_paths).unwrap();
+        assert!(!result.contains("Error:"), "Operation should succeed");
+
+        let content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(content, "line 1\nline 2\nline 3\nline 1");
+    }
+
+    #[test]
+    fn test_move_inter_file_and_chain_edit() {
+        let (tmp_dir1, source_path) = setup_test_file("... irrelevant ...\nfn my_func() {}\n...");
+        let (tmp_dir2, dest_path) = setup_test_file("mod helper;");
+        let mut manager = FileStateManager::new();
+        let accessible_paths = vec![
+            tmp_dir1.path().to_str().unwrap().to_string(),
+            tmp_dir2.path().to_str().unwrap().to_string(),
+        ];
+
+        let source_state = manager.open_file(&source_path).unwrap();
+        let source_hash = source_state.get_short_hash().to_string();
+        let source_indexes = source_state
+            .lines
+            .keys()
+            .map(|k| k.to_string())
+            .collect::<Vec<_>>();
+
+        let dest_state = manager.open_file(&dest_path).unwrap();
+        let dest_hash = dest_state.get_short_hash().to_string();
+        let dest_indexes = dest_state
+            .lines
+            .keys()
+            .map(|k| k.to_string())
+            .collect::<Vec<_>>();
+
+        // The goal is to move "fn my_func() {}" from source to dest,
+        // and in the same operation, edit a different part of the destination file.
+        let args = FileOperationArgs {
+            moves: vec![MoveArgs {
+                source_file_path: source_path.clone(),
+                source_lif_hash: source_hash,
+                source_start_lid: source_indexes[1].clone(),
+                source_end_lid: source_indexes[1].clone(),
+                dest_file_path: dest_path.clone(),
+                dest_lif_hash: dest_hash.clone(),
+                dest_after_lid: dest_indexes[0].clone(),
+            }],
+            edits: vec![PatchArgs {
+                file_path: dest_path.clone(),
+                lif_hash: dest_hash, // Use the same original hash
+                patch: vec![PatchOperation::Replace(ReplaceOperation {
+                    start_lid: dest_indexes[0].clone(),
+                    end_lid: dest_indexes[0].clone(),
+                    content: vec!["// helper module".to_string()],
+                    context_before: None,
+                    context_after: None,
+                })],
+            }],
+            copies: vec![],
+        };
+
+        let result = execute_file_operations(&args, &mut manager, &accessible_paths).unwrap();
+        assert!(
+            !result.contains("Error:"),
+            "Operation should succeed, but got {result}"
+        );
+
+        let source_content = fs::read_to_string(source_path).unwrap();
+        assert_eq!(source_content, "... irrelevant ...\n...");
+
+        let dest_content = fs::read_to_string(dest_path).unwrap();
+        assert_eq!(dest_content, "// helper module\nfn my_func() {}");
+    }
+
+    #[test]
     fn test_execute_patch_with_wrong_context() {
         let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2\nline 3");
         let mut manager = FileStateManager::new();
@@ -152,13 +262,18 @@ mod tests {
 
         let initial_state = manager.open_file(&file_path).unwrap();
         let initial_short_hash = initial_state.get_short_hash().to_string();
+        let initial_indexes = initial_state
+            .lines
+            .keys()
+            .map(|k| k.to_string())
+            .collect::<Vec<_>>();
 
         let args = FileOperationArgs {
             edits: vec![PatchArgs {
                 file_path: file_path.clone(),
                 lif_hash: initial_short_hash.clone(),
                 patch: vec![PatchOperation::Insert(InsertOperation {
-                    after_lid: "LID2000".to_string(),
+                    after_lid: initial_indexes[1].clone(),
                     content: vec!["new line".to_string()],
                     context_before: Some("line 1".to_string()), // This is wrong
                     context_after: Some("line 3".to_string()),
@@ -184,6 +299,11 @@ mod tests {
 
         let initial_state = manager.open_file(&file_path).unwrap();
         let initial_short_hash = initial_state.get_short_hash().to_string();
+        let initial_indexes = initial_state
+            .lines
+            .keys()
+            .map(|k| k.to_string())
+            .collect::<Vec<_>>();
 
         // The AI provides context with the LID prefix, which should now be handled.
         let args = FileOperationArgs {
@@ -191,10 +311,10 @@ mod tests {
                 file_path: file_path.clone(),
                 lif_hash: initial_short_hash.clone(),
                 patch: vec![PatchOperation::Insert(InsertOperation {
-                    after_lid: "LID1000".to_string(),
+                    after_lid: initial_indexes[0].clone(),
                     content: vec!["line 2".to_string()],
-                    context_before: Some("LID1000: line 1".to_string()), // Incorrectly includes LID
-                    context_after: Some("LID2000: line 3".to_string()),  // Incorrectly includes LID
+                    context_before: Some(format!("{}: line 1", initial_indexes[0])), // Incorrectly includes LID
+                    context_after: Some(format!("{}: line 3", initial_indexes[1])), // Incorrectly includes LID
                 })],
             }],
             copies: vec![],
@@ -224,6 +344,11 @@ mod tests {
 
         let initial_state = manager.open_file(&file_path).unwrap();
         let initial_short_hash = initial_state.get_short_hash().to_string();
+        let initial_indexes = initial_state
+            .lines
+            .keys()
+            .map(|k| k.to_string())
+            .collect::<Vec<_>>();
 
         // The AI provides context with clean whitespace. This should succeed.
         let args = FileOperationArgs {
@@ -231,8 +356,8 @@ mod tests {
                 file_path: file_path.clone(),
                 lif_hash: initial_short_hash.clone(),
                 patch: vec![PatchOperation::Replace(ReplaceOperation {
-                    start_lid: "LID2000".to_string(), // The empty line
-                    end_lid: "LID2000".to_string(),
+                    start_lid: initial_indexes[1].clone(), // The empty line
+                    end_lid: initial_indexes[1].clone(),
                     content: vec!["line 2".to_string()],
                     context_before: Some("line 1".to_string()),
                     context_after: Some("line 3".to_string()),
@@ -253,93 +378,5 @@ mod tests {
 
         let disk_content = fs::read_to_string(&file_path).unwrap();
         assert_eq!(disk_content, "line 1\nline 2\n  line 3  ");
-    }
-
-    #[test]
-    fn test_copy_intra_file() {
-        let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2\nline 3");
-        let mut manager = FileStateManager::new();
-        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
-
-        let initial_state = manager.open_file(&file_path).unwrap();
-        let initial_hash = initial_state.get_short_hash().to_string();
-
-        let args = FileOperationArgs {
-            copies: vec![CopyArgs {
-                source_file_path: file_path.clone(),
-                source_lif_hash: initial_hash.clone(),
-                source_start_lid: "LID1000".to_string(),
-                source_end_lid: "LID1000".to_string(),
-                dest_file_path: file_path.clone(),
-                dest_lif_hash: initial_hash,
-                dest_after_lid: "LID3000".to_string(),
-            }],
-            edits: vec![],
-            moves: vec![],
-        };
-
-        let result = execute_file_operations(&args, &mut manager, &accessible_paths).unwrap();
-        assert!(!result.contains("Error:"), "Operation should succeed");
-
-        let content = fs::read_to_string(&file_path).unwrap();
-        assert_eq!(content, "line 1\nline 2\nline 3\nline 1");
-    }
-
-    #[test]
-    fn test_move_inter_file_and_chain_edit() {
-        let (_tmp_dir, source_path) = setup_test_file("... irrelevant ...\nfn my_func() {}\n...");
-        let (_tmp_dir2, dest_path) = setup_test_file("mod helper;");
-        let mut manager = FileStateManager::new();
-        let accessible_paths = vec![
-            _tmp_dir.path().to_str().unwrap().to_string(),
-            _tmp_dir2.path().to_str().unwrap().to_string(),
-        ];
-
-        let source_hash = manager
-            .open_file(&source_path)
-            .unwrap()
-            .get_short_hash()
-            .to_string();
-        let dest_hash = manager
-            .open_file(&dest_path)
-            .unwrap()
-            .get_short_hash()
-            .to_string();
-
-        let args = FileOperationArgs {
-            moves: vec![MoveArgs {
-                source_file_path: source_path.clone(),
-                source_lif_hash: source_hash,
-                source_start_lid: "LID2000".to_string(),
-                source_end_lid: "LID2000".to_string(),
-                dest_file_path: dest_path.clone(),
-                dest_lif_hash: dest_hash.clone(),
-                dest_after_lid: "LID1000".to_string(),
-            }],
-            edits: vec![PatchArgs {
-                file_path: dest_path.clone(),
-                lif_hash: dest_hash, // Note: using the *original* hash
-                patch: vec![PatchOperation::Replace(ReplaceOperation {
-                    start_lid: "LID1500".to_string(), // LID of the moved function
-                    end_lid: "LID1500".to_string(),
-                    content: vec!["pub fn my_func() {}".to_string()], // Make it public
-                    context_before: None,
-                    context_after: None,
-                })],
-            }],
-            copies: vec![],
-        };
-
-        let result = execute_file_operations(&args, &mut manager, &accessible_paths).unwrap();
-        assert!(
-            !result.contains("Error:"),
-            "Operation should succeed, but got {result}"
-        );
-
-        let source_content = fs::read_to_string(&source_path).unwrap();
-        assert_eq!(source_content, "... irrelevant ...\n...");
-
-        let dest_content = fs::read_to_string(&dest_path).unwrap();
-        assert_eq!(dest_content, "mod helper;\npub fn my_func() {}");
     }
 }

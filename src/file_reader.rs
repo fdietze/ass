@@ -25,7 +25,7 @@ pub fn read_file_tool_schema() -> Tool {
                 "Reads one or more files into context. Can read full files or specific line ranges.
 You can request multiple, non-contiguous ranges from a single file in one go.
 Each file's output is separated. If more than one file is requested, the output for each file will be preceded by a header. If you are reading because of compiler or linter errors, only read specific ranges.
-IMPORTANT: The `edit_file` tool provides the new `lif_hash` after a successful edit. If you have this hash and the necessary LIDs, **don't read the file again**. Only use this tool for initial reads."
+IMPORTANT: The `edit_file` tool provides the new hash after a successful edit. If you have this hash and the necessary line indexes, **don't read the file again**. Only use this tool for initial reads."
                     .to_string(),
             ),
             parameters: serde_json::json!({
@@ -205,12 +205,13 @@ mod tests {
 
         let file_state = file_state_manager.open_file(&file_path).unwrap();
         let short_hash = &file_state.lif_hash[..8];
+        let indexes: Vec<_> = file_state.lines.keys().map(|k| k.to_string()).collect();
 
         assert!(result.contains(&format!("Hash: {short_hash}")));
         assert!(result.contains("Lines: 1-3/3"));
-        assert!(result.contains("1    LID1000: line 1"));
-        assert!(result.contains("2    LID2000: line 2"));
-        assert!(result.contains("3    LID3000: line 3"));
+        assert!(result.contains(&format!("1    {}: line 1", indexes[0])));
+        assert!(result.contains(&format!("2    {}: line 2", indexes[1])));
+        assert!(result.contains(&format!("3    {}: line 3", indexes[2])));
     }
 
     #[test]
@@ -232,12 +233,14 @@ mod tests {
         let mut file_state_manager = FileStateManager::new();
 
         let result = execute_read_file(&args, &config, &mut file_state_manager).unwrap();
+        let file_state = file_state_manager.open_file(&file_path).unwrap();
+        let indexes: Vec<_> = file_state.lines.keys().map(|k| k.to_string()).collect();
         assert!(result.contains("Lines: 2-4/5"));
-        assert!(!result.contains("1    LID1000: 1"));
-        assert!(result.contains("2    LID2000: 2"));
-        assert!(result.contains("3    LID3000: 3"));
-        assert!(result.contains("4    LID4000: 4"));
-        assert!(!result.contains("5    LID5000: 5"));
+        assert!(!result.contains("1    "));
+        assert!(result.contains(&format!("2    {}: 2", indexes[1])));
+        assert!(result.contains(&format!("3    {}: 3", indexes[2])));
+        assert!(result.contains(&format!("4    {}: 4", indexes[3])));
+        assert!(!result.contains("5    "));
     }
 
     #[test]
@@ -265,15 +268,18 @@ mod tests {
         let mut file_state_manager = FileStateManager::new();
 
         let result = execute_read_file(&args, &config, &mut file_state_manager).unwrap();
+        let file_state = file_state_manager.open_file(&file_path).unwrap();
+        let indexes: Vec<_> = file_state.lines.keys().map(|k| k.to_string()).collect();
+
         assert!(result.contains("Lines: 2-3, 8-9/10"));
-        assert!(!result.contains("1    LID1000: 1"));
-        assert!(result.contains("2    LID2000: 2"));
-        assert!(result.contains("3    LID3000: 3"));
-        assert!(!result.contains("4    LID4000: 4"));
-        assert!(!result.contains("7    LID7000: 7"));
-        assert!(result.contains("8    LID8000: 8"));
-        assert!(result.contains("9    LID9000: 9"));
-        assert!(!result.contains("10   LID10000: 10"));
+        assert!(!result.contains("1    "));
+        assert!(result.contains(&format!("2    {}: 2", indexes[1])));
+        assert!(result.contains(&format!("3    {}: 3", indexes[2])));
+        assert!(!result.contains("4    "));
+        assert!(!result.contains("7    "));
+        assert!(result.contains(&format!("8    {}: 8", indexes[7])));
+        assert!(result.contains(&format!("9    {}: 9", indexes[8])));
+        assert!(!result.contains("10   "));
     }
 
     #[test]

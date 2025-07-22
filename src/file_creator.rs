@@ -35,7 +35,7 @@ pub fn create_file_tool_schema() -> Tool {
             description: Some(
                 "Creates one or more new files with specified content.
 This operation is atomic: if any file creation fails, no files from the batch are created.
-Returns the LIF representation (content with LIDs and a lif_hash) for each successfully created file. This information is required for any subsequent edits to the new files within the same session.
+Returns the representation (content with line indexes and a hash) for each successfully created file. This information is required for any subsequent edits to the new files within the same session.
 If the file content comes from another file, instead of creating a file with the content, create an empty file and then use the move operation to move specific lines from the source file to the new file.
 "
                     .to_string(),
@@ -143,8 +143,10 @@ mod tests {
         let result = execute_create_files(&args, &mut manager, &accessible_paths).unwrap();
 
         assert!(result.contains(&format!("File: {file_path_str}")));
-        assert!(result.contains("LID1000: hello"));
-        assert!(result.contains("LID2000: world"));
+        let file_state = manager.open_file(&file_path_str).unwrap();
+        let indexes: Vec<_> = file_state.lines.keys().map(|k| k.to_string()).collect();
+        assert!(result.contains(&format!("{}: hello", indexes[0])));
+        assert!(result.contains(&format!("{}: world", indexes[1])));
         assert!(result.contains("Hash:"));
 
         let disk_content = fs::read_to_string(file_path).unwrap();

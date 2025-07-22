@@ -5,7 +5,8 @@ use crate::{
     patch::{InsertOperation, PatchOperation, ReplaceOperation},
 };
 use console::style;
-use std::{collections::BTreeMap, fs, path::PathBuf};
+use fractional_index::FractionalIndex;
+use std::{fs, path::PathBuf};
 use tempfile::Builder;
 fn setup_test_file(content: &str) -> (tempfile::TempDir, PathBuf) {
     let tmp_dir = Builder::new().prefix("test-fs-").tempdir().unwrap();
@@ -14,17 +15,32 @@ fn setup_test_file(content: &str) -> (tempfile::TempDir, PathBuf) {
     (tmp_dir, file_path)
 }
 
+fn get_indexes(state: &FileState) -> Vec<String> {
+    state.lines.keys().map(|k| k.to_string()).collect()
+}
+
 #[test]
 fn test_file_state_new() {
     let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2");
     let state = FileState::new(file_path, "line 1\nline 2");
 
     assert_eq!(state.lines.len(), 2);
-    assert_eq!(state.lines.get(&1000), Some(&"line 1".to_string()));
-    assert_eq!(state.lines.get(&2000), Some(&"line 2".to_string()));
+    let indexes = get_indexes(&state);
+    assert_eq!(
+        state
+            .lines
+            .get(&FractionalIndex::from_string(&indexes[0]).unwrap()),
+        Some(&"line 1".to_string())
+    );
+    assert_eq!(
+        state
+            .lines
+            .get(&FractionalIndex::from_string(&indexes[1]).unwrap()),
+        Some(&"line 2".to_string())
+    );
 
-    let expected_lif_content = "LID1000: line 1\nLID2000: line 2";
-    let expected_hash = FileState::calculate_hash(expected_lif_content);
+    let expected_lif_content = format!("{}: line 1\n{}: line 2", indexes[0], indexes[1]);
+    let expected_hash = FileState::calculate_hash(&expected_lif_content);
     assert_eq!(state.lif_hash, expected_hash);
 }
 
@@ -37,13 +53,14 @@ fn test_get_lif_representation_new_format() {
     let project_root = std::env::current_dir().unwrap();
     let relative_path = file_path.strip_prefix(&project_root).unwrap_or(&file_path);
     let short_hash = state.get_short_hash();
+    let indexes = get_indexes(&state);
 
     let expected_header = format!(
         "File: {} | Hash: {} | Lines: 1-2/2",
         relative_path.display(),
         short_hash
     );
-    let expected_body = "1    LID1000: line 1\n2    LID2000: line 2";
+    let expected_body = format!("1    {}: line 1\n2    {}: line 2", indexes[0], indexes[1]);
     assert_eq!(
         representation,
         format!("{expected_header}\n{expected_body}")
@@ -63,13 +80,17 @@ fn test_get_lif_string_for_range() {
     let project_root = std::env::current_dir().unwrap();
     let relative_path = file_path.strip_prefix(&project_root).unwrap_or(&file_path);
     let short_hash = state.get_short_hash();
+    let indexes = get_indexes(&state);
 
     let expected_header = format!(
         "File: {} | Hash: {} | Lines: 2-4/5",
         relative_path.display(),
         short_hash
     );
-    let expected_body = "2    LID2000: 2\n3    LID3000: 3\n4    LID4000: 4";
+    let expected_body = format!(
+        "2    {}: 2\n3    {}: 3\n4    {}: 4",
+        indexes[1], indexes[2], indexes[3]
+    );
     assert_eq!(
         partial_representation,
         format!("{expected_header}\n{expected_body}")
@@ -80,9 +101,10 @@ fn test_get_lif_string_for_range() {
 fn test_apply_and_write_patch() {
     let (_tmp_dir, file_path) = setup_test_file("line 1\nline 3");
     let mut state = FileState::new(file_path.clone(), "line 1\nline 3");
+    let old_indexes = get_indexes(&state);
 
     let patch = vec![PatchOperation::Insert(InsertOperation {
-        after_lid: "LID1000".to_string(),
+        after_lid: old_indexes[0].clone(),
         content: vec!["line 2".to_string()],
         context_before: None,
         context_after: None,
@@ -96,9 +118,17 @@ fn test_apply_and_write_patch() {
 
     // Check in-memory state
     assert_eq!(state.get_full_content(), "line 1\nline 2\nline 3");
+    let new_indexes = get_indexes(&state);
+    let inserted_index = &new_indexes[1];
 
     // Check diff
-    assert!(diff.contains(&style("+ LID1500: line 2".to_string()).green().to_string()));
+    assert!(
+        diff.contains(
+            &style(format!("+ {inserted_index}: line 2"))
+                .green()
+                .to_string()
+        )
+    );
 }
 
 #[test]
@@ -121,9 +151,15 @@ fn test_patch_insert_at_start() {
         context_after: Some("line 1".to_string()),
     })];
     state.apply_patch(&patch).unwrap();
+    let new_indexes = get_indexes(&state);
 
     assert_eq!(state.lines.len(), 2);
-    assert_eq!(state.lines.get(&500), Some(&"new first line".to_string()));
+    assert_eq!(
+        state
+            .lines
+            .get(&FractionalIndex::from_string(&new_indexes[0]).unwrap()),
+        Some(&"new first line".to_string())
+    );
     assert_ne!(state.lif_hash, original_hash);
     assert_eq!(state.get_full_content(), "new first line\nline 1");
 }
@@ -132,17 +168,24 @@ fn test_patch_insert_at_start() {
 fn test_patch_insert_in_middle() {
     let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2");
     let mut state = FileState::new(file_path, "line 1\nline 2");
+    let old_indexes = get_indexes(&state);
 
     let patch = vec![PatchOperation::Insert(InsertOperation {
-        after_lid: "LID1000".to_string(),
+        after_lid: old_indexes[0].clone(),
         content: vec!["new middle line".to_string()],
         context_before: Some("line 1".to_string()),
         context_after: Some("line 2".to_string()),
     })];
     state.apply_patch(&patch).unwrap();
+    let new_indexes = get_indexes(&state);
 
     assert_eq!(state.lines.len(), 3);
-    assert_eq!(state.lines.get(&1500), Some(&"new middle line".to_string()));
+    assert_eq!(
+        state
+            .lines
+            .get(&FractionalIndex::from_string(&new_indexes[1]).unwrap()),
+        Some(&"new middle line".to_string())
+    );
     assert_eq!(state.get_full_content(), "line 1\nnew middle line\nline 2");
 }
 
@@ -151,10 +194,11 @@ fn test_patch_delete_range() {
     let content = "line 1\nline 2\nline 3\nline 4";
     let (_tmp_dir, file_path) = setup_test_file(content);
     let mut state = FileState::new(file_path, content);
+    let old_indexes = get_indexes(&state);
 
     let patch = vec![PatchOperation::Replace(ReplaceOperation {
-        start_lid: "LID2000".to_string(),
-        end_lid: "LID3000".to_string(),
+        start_lid: old_indexes[1].clone(),
+        end_lid: old_indexes[2].clone(),
         content: vec![],
         context_before: Some("line 1".to_string()),
         context_after: Some("line 4".to_string()),
@@ -170,10 +214,11 @@ fn test_patch_replace_range() {
     let content = "line 1\nline 2\nline 3\nline 4";
     let (_tmp_dir, file_path) = setup_test_file(content);
     let mut state = FileState::new(file_path, content);
+    let old_indexes = get_indexes(&state);
 
     let patch = vec![PatchOperation::Replace(ReplaceOperation {
-        start_lid: "LID2000".to_string(),
-        end_lid: "LID3000".to_string(),
+        start_lid: old_indexes[1].clone(),
+        end_lid: old_indexes[2].clone(),
         content: vec!["replacement".to_string()],
         context_before: Some("line 1".to_string()),
         context_after: Some("line 4".to_string()),
@@ -186,19 +231,20 @@ fn test_patch_replace_range() {
 
 #[test]
 fn test_deserialize_patch_operation() {
+    // Note: The LIDs are now just strings, so no "LID" prefix is needed.
     let json_data = r#"
         [
             {
                 "op": "r",
-                "start_lid": "LID1000",
-                "end_lid": "LID2000",
+                "start_lid": "a",
+                "end_lid": "b",
                 "content": ["new content"],
                 "context_before": "optional context",
                 "context_after": null
             },
             {
                 "op": "i",
-                "after_lid": "LID3000",
+                "after_lid": "c",
                 "content": ["inserted line 1", "inserted line 2"],
                 "context_before": null,
                 "context_after": "optional context 2"
@@ -210,8 +256,8 @@ fn test_deserialize_patch_operation() {
     assert_eq!(
         operations[0],
         PatchOperation::Replace(ReplaceOperation {
-            start_lid: "LID1000".to_string(),
-            end_lid: "LID2000".to_string(),
+            start_lid: "a".to_string(),
+            end_lid: "b".to_string(),
             content: vec!["new content".to_string()],
             context_before: Some("optional context".to_string()),
             context_after: None
@@ -220,7 +266,7 @@ fn test_deserialize_patch_operation() {
     assert_eq!(
         operations[1],
         PatchOperation::Insert(InsertOperation {
-            after_lid: "LID3000".to_string(),
+            after_lid: "c".to_string(),
             content: vec!["inserted line 1".to_string(), "inserted line 2".to_string()],
             context_before: None,
             context_after: Some("optional context 2".to_string())
@@ -235,8 +281,9 @@ fn test_edit_same_file_thrice_sequentially() {
     let mut state = FileState::new(file_path, content);
 
     // First patch
+    let indexes1 = get_indexes(&state);
     let patch1 = vec![PatchOperation::Insert(InsertOperation {
-        after_lid: "LID1000".to_string(),
+        after_lid: indexes1[0].clone(),
         content: vec!["inserted after 1".to_string()],
         context_before: Some("line 1".to_string()),
         context_after: Some("line 2".to_string()),
@@ -250,9 +297,10 @@ fn test_edit_same_file_thrice_sequentially() {
     );
 
     // Second patch
+    let indexes2 = get_indexes(&state);
     let patch2 = vec![PatchOperation::Replace(ReplaceOperation {
-        start_lid: "LID2000".to_string(),
-        end_lid: "LID3000".to_string(),
+        start_lid: indexes2[2].clone(),
+        end_lid: indexes2[3].clone(),
         content: vec!["replacement".to_string()],
         context_before: Some("inserted after 1".to_string()),
         context_after: None,
@@ -266,8 +314,9 @@ fn test_edit_same_file_thrice_sequentially() {
     );
 
     // Third patch
+    let indexes3 = get_indexes(&state);
     let patch3 = vec![PatchOperation::Insert(InsertOperation {
-        after_lid: "LID1500".to_string(), // This was the LID for "inserted after 1"
+        after_lid: indexes3[1].clone(),
         content: vec!["another insertion".to_string()],
         context_before: Some("inserted after 1".to_string()),
         context_after: Some("replacement".to_string()),
@@ -286,10 +335,11 @@ fn test_patch_replace_invalid_range_start_after_end() {
     let content = "line 1\nline 2\nline 3";
     let (_tmp_dir, file_path) = setup_test_file(content);
     let mut state = FileState::new(file_path, content);
+    let indexes = get_indexes(&state);
 
     let patch = vec![PatchOperation::Replace(ReplaceOperation {
-        start_lid: "LID3000".to_string(),
-        end_lid: "LID1000".to_string(),
+        start_lid: indexes[2].clone(),
+        end_lid: indexes[0].clone(),
         content: vec!["new".to_string()],
         context_before: None,
         context_after: None,
@@ -310,10 +360,11 @@ fn test_patch_replace_non_existent_start_lid() {
     let content = "line 1\nline 2";
     let (_tmp_dir, file_path) = setup_test_file(content);
     let mut state = FileState::new(file_path, content);
+    let indexes = get_indexes(&state);
 
     let patch = vec![PatchOperation::Replace(ReplaceOperation {
-        start_lid: "LID999".to_string(), // Does not exist
-        end_lid: "LID2000".to_string(),
+        start_lid: "non-existent-index".to_string(),
+        end_lid: indexes[1].clone(),
         content: vec!["new".to_string()],
         context_before: None,
         context_after: None,
@@ -325,7 +376,7 @@ fn test_patch_replace_non_existent_start_lid() {
         result
             .unwrap_err()
             .to_string()
-            .contains("start_lid 'LID999' does not exist")
+            .contains("Invalid index format")
     );
 }
 
@@ -334,10 +385,11 @@ fn test_patch_replace_non_existent_end_lid() {
     let content = "line 1\nline 2";
     let (_tmp_dir, file_path) = setup_test_file(content);
     let mut state = FileState::new(file_path, content);
+    let indexes = get_indexes(&state);
 
     let patch = vec![PatchOperation::Replace(ReplaceOperation {
-        start_lid: "LID1000".to_string(),
-        end_lid: "LID9999".to_string(), // Does not exist
+        start_lid: indexes[0].clone(),
+        end_lid: "non-existent-index".to_string(),
         content: vec!["new".to_string()],
         context_before: None,
         context_after: None,
@@ -349,39 +401,27 @@ fn test_patch_replace_non_existent_end_lid() {
         result
             .unwrap_err()
             .to_string()
-            .contains("end_lid 'LID9999' does not exist")
+            .contains("Invalid index format")
     );
 }
 
 #[test]
-fn test_error_on_lid_space_exhaustion() {
-    let mut lines = BTreeMap::new();
-    lines.insert(1000, "line 1".to_string());
-    lines.insert(1002, "line 2".to_string()); // Only 1 space between LIDs
+fn test_no_error_on_repeated_insertions() {
+    let (_tmp_dir, file_path) = setup_test_file("a\nb");
+    let mut state = FileState::new(file_path, "a\nb");
 
-    // Try to insert 2 lines, which requires 3 slots (step would be 0)
-    let result = FileState::generate_new_lids(&lines, "LID1000", 2);
-    assert!(result.is_err());
-    assert_eq!(
-        result.unwrap_err().to_string(),
-        "Cannot insert 2 lines between LID1000 and LID1002. Not enough space."
-    );
-}
-
-#[test]
-fn test_generate_new_lids_at_start_with_no_space() {
-    let mut lines = BTreeMap::new();
-    lines.insert(1, "line 1".to_string()); // A very small starting LID
-
-    // Try to insert a line at the start. The step will be 1 / (1+1) = 0.
-    let result = FileState::generate_new_lids(&lines, "_START_OF_FILE_", 1);
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Not enough space to insert at the beginning")
-    );
+    for i in 0..100 {
+        let indexes = get_indexes(&state);
+        let patch = vec![PatchOperation::Insert(InsertOperation {
+            after_lid: indexes[i].clone(),
+            content: vec![format!("new line {i}")],
+            context_before: None,
+            context_after: None,
+        })];
+        // This should never fail with fractional indexing
+        state.apply_patch(&patch).unwrap();
+    }
+    assert_eq!(state.lines.len(), 102);
 }
 
 #[test]
@@ -389,10 +429,11 @@ fn test_patch_replace_first_line() {
     let content = "line 1\nline 2\nline 3";
     let (_tmp_dir, file_path) = setup_test_file(content);
     let mut state = FileState::new(file_path, content);
+    let indexes = get_indexes(&state);
 
     let patch = vec![PatchOperation::Replace(ReplaceOperation {
-        start_lid: "LID1000".to_string(),
-        end_lid: "LID1000".to_string(),
+        start_lid: indexes[0].clone(),
+        end_lid: indexes[0].clone(),
         content: vec!["new first".to_string()],
         context_before: None,
         context_after: None,
@@ -408,10 +449,11 @@ fn test_patch_replace_last_line() {
     let content = "line 1\nline 2\nline 3";
     let (_tmp_dir, file_path) = setup_test_file(content);
     let mut state = FileState::new(file_path, content);
+    let indexes = get_indexes(&state);
 
     let patch = vec![PatchOperation::Replace(ReplaceOperation {
-        start_lid: "LID3000".to_string(),
-        end_lid: "LID3000".to_string(),
+        start_lid: indexes[2].clone(),
+        end_lid: indexes[2].clone(),
         content: vec!["new last".to_string()],
         context_before: None,
         context_after: None,
@@ -427,10 +469,11 @@ fn test_patch_replace_entire_file() {
     let content = "line 1\nline 2\nline 3";
     let (_tmp_dir, file_path) = setup_test_file(content);
     let mut state = FileState::new(file_path, content);
+    let indexes = get_indexes(&state);
 
     let patch = vec![PatchOperation::Replace(ReplaceOperation {
-        start_lid: "LID1000".to_string(),
-        end_lid: "LID3000".to_string(),
+        start_lid: indexes[0].clone(),
+        end_lid: indexes[2].clone(),
         content: vec!["all new".to_string()],
         context_before: None,
         context_after: None,
@@ -446,10 +489,11 @@ fn test_patch_delete_entire_file() {
     let content = "line 1\nline 2\nline 3";
     let (_tmp_dir, file_path) = setup_test_file(content);
     let mut state = FileState::new(file_path, content);
+    let indexes = get_indexes(&state);
 
     let patch = vec![PatchOperation::Replace(ReplaceOperation {
-        start_lid: "LID1000".to_string(),
-        end_lid: "LID3000".to_string(),
+        start_lid: indexes[0].clone(),
+        end_lid: indexes[2].clone(),
         content: vec![],
         context_before: None,
         context_after: None,
@@ -465,38 +509,42 @@ fn test_patch_insert_at_end() {
     let content = "line 1\nline 2";
     let (_tmp_dir, file_path) = setup_test_file(content);
     let mut state = FileState::new(file_path, content);
+    let indexes = get_indexes(&state);
 
     let patch = vec![PatchOperation::Insert(InsertOperation {
-        after_lid: "LID2000".to_string(),
+        after_lid: indexes[1].clone(),
         content: vec!["new last line".to_string()],
         context_before: None,
         context_after: None,
     })];
     state.apply_patch(&patch).unwrap();
+    let new_indexes = get_indexes(&state);
 
     assert_eq!(state.lines.len(), 3);
-    // The new lid should be halfway between 2000 and the synthetic next lid (2000 + 1000).
-    assert_eq!(state.lines.get(&2500), Some(&"new last line".to_string()));
+    assert_eq!(
+        state
+            .lines
+            .get(&FractionalIndex::from_string(&new_indexes[2]).unwrap()),
+        Some(&"new last line".to_string())
+    );
     assert_eq!(state.get_full_content(), "line 1\nline 2\nnew last line");
 }
 
 #[test]
-fn test_parse_lid_invalid_formats() {
-    assert!(FileState::parse_lid("foo").is_err());
-    assert!(FileState::parse_lid("LID").is_err());
-    assert!(FileState::parse_lid("LID-123").is_err());
-    assert!(FileState::parse_lid("LID123a").is_err());
+fn test_parse_index_invalid_formats() {
+    assert!(FileState::parse_index("").is_err());
+    assert!(FileState::parse_index("not-a-valid-index").is_err());
 }
 
 #[test]
 fn test_deserialize_malformed_patch_operation() {
     // Unknown operation code
-    let json_unknown_op = r#"[{"op": "d", "afterLid": "LID1000"}]"#;
+    let json_unknown_op = r#"[{"op": "d", "after_lid": "a"}]"#;
     let result: Result<Vec<PatchOperation>, _> = serde_json::from_str(json_unknown_op);
     assert!(result.is_err());
 
     // Missing required field for "r"
-    let json_missing_field_r = r#"[{"op": "r", "startLid": "LID1000"}]"#;
+    let json_missing_field_r = r#"[{"op": "r", "start_lid": "a"}]"#;
     let result: Result<Vec<PatchOperation>, _> = serde_json::from_str(json_missing_field_r);
     assert!(result.is_err());
 
@@ -525,7 +573,13 @@ fn test_file_state_new_with_single_newline() {
 
     // A single newline is one empty line.
     assert_eq!(state.lines.len(), 1);
-    assert_eq!(state.lines.get(&1000), Some(&"".to_string()));
+    let indexes = get_indexes(&state);
+    assert_eq!(
+        state
+            .lines
+            .get(&FractionalIndex::from_string(&indexes[0]).unwrap()),
+        Some(&"".to_string())
+    );
     assert_eq!(state.get_full_content(), "\n");
     assert!(state.ends_with_newline);
 }
@@ -537,7 +591,13 @@ fn test_file_state_new_with_trailing_newline() {
     let state = FileState::new(file_path, content);
 
     assert_eq!(state.lines.len(), 1);
-    assert_eq!(state.lines.get(&1000), Some(&"line 1".to_string()));
+    let indexes = get_indexes(&state);
+    assert_eq!(
+        state
+            .lines
+            .get(&FractionalIndex::from_string(&indexes[0]).unwrap()),
+        Some(&"line 1".to_string())
+    );
     assert_eq!(state.get_full_content(), "line 1\n");
     assert!(state.ends_with_newline);
 }

@@ -87,7 +87,9 @@ pub fn handle_tool_call(
                         "Error: Invalid arguments provided for {function_name}: {e}"
                     )),
                 };
-
+            if let Ok(output) = &result {
+                println!("\n{output}\n");
+            }
             let (colored_output, uncolored_output) = match result {
                 Ok(output) => (output.clone(), strip_str(&output)),
                 Err(e) => {

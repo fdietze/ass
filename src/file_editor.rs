@@ -107,13 +107,6 @@ pub struct FileOperationArgs {
     pub moves: Vec<MoveArgs>,
 }
 
-/// Generates the tool schema for the `edit_file` tool.
-///
-/// ### Reasoning
-/// A detailed and clear description is paramount. It acts as a form of "prompt engineering"
-/// for the tool-use part of the LLM's brain. It explicitly tells the model what format
-/// to use, what the operations mean, and provides a concrete example. This significantly
-/// increases the reliability of the LLM's output.
 pub fn edit_file_tool_schema() -> Tool {
     Tool::Function {
         function: FunctionDescription {
@@ -133,16 +126,17 @@ pub fn edit_file_tool_schema() -> Tool {
 - **Parantheses**: Pay special attention to parantheses. Will they be still balanced after the edit?
 
 **Patch Details for `edits`**:
-- **Replace/Delete**: `{"op":"r", "start_lid":"LID1", "end_lid":"LID5", "content":["new"]}`. To delete, provide an empty `content` array.
-- **Insert**: `{"op":"i", "after_lid":"LID10", "content":["new"]}`. Use `_START_OF_FILE_` for `after_lid` to insert at the beginning.
+- **Replace/Delete**: `{"op":"r", "start_lid":"index1", "end_lid":"index5", "content":["new"]}`. To delete, provide an empty `content` array.
+- **Insert**: `{"op":"i", "after_lid":"index10", "content":["new"]}`. Use `_START_OF_FILE_` for `after_lid` to insert at the beginning.
 - **Context for Safety**: The optional `context_before` and `context_after` fields are highly recommended to prevent errors if the file has changed unexpectedly.
 
 **Rules**:
-- Line identifiers (LIDs) MUST be the strings from when the file was read (e.g., 'LID1000').
+- Line identifiers (indexes) MUST be the strings from when the file was read.
 - The `lif_hash` for any operation MUST match the hash from when the file was last read or edited.
 
 **Example**:
-`{"moves":[{"source_file_path":"a.rs","source_lif_hash":"h1","source_start_lid":"LID20","source_end_lid":"LID25","dest_file_path":"b.rs","dest_lif_hash":"h2","dest_after_lid":"LID10"}],"edits":[{"file_path":"a.rs","lif_hash":"h1","patch":[{"op":"r","start_lid":"LID2","end_lid":"LID2","context_before":"// File a","content":["use b;"],"context_after":"fn main() {}"}]}]}`"#
+`{"moves":[{"source_file_path":"a.rs","source_lif_hash":"h1","source_start_lid":"index20","source_end_lid":"index25","dest_file_path":"b.rs","dest_lif_hash":"h2","dest_after_lid":"index10"}],"edits":[{"file_path":"a.rs","lif_hash":"h1","patch":[{"op":"r","start_lid":"index2","end_lid":"index2","context_before":"// File a","content":["use b;"],"context_after":"fn main() {}"}]}]}`
+"#
                     .to_string(),
             ),
             parameters: serde_json::json!({
@@ -173,8 +167,8 @@ pub fn edit_file_tool_schema() -> Tool {
                                                 "description": "Replace a range of lines, like a 'diff hunk'. This is best for updating a whole function body or other logical block.",
                                                 "properties": {
                                                     "op": {"const": "r"},
-                                                    "start_lid": {"type": "string", "description": "The starting line identifier. MUST be a string like 'LID1000'."},
-                                                    "end_lid": {"type": "string", "description": "The ending line identifier. MUST be a string like 'LID2000'. For a single line, start_lid and end_lid are the same."},
+                                                    "start_lid": {"type": "string", "description": "The starting line identifier."},
+                                                    "end_lid": {"type": "string", "description": "The ending line identifier. For a single line, start_lid and end_lid are the same."},
                                                     "content": {"type": "array", "items": {"type": "string"}, "description": "The new lines of content to replace the specified range."},
                                                     "context_before": {"type": "string", "description": "The exact content of the line immediately before start_lid. Highly recommended for safety."},
                                                     "context_after": {"type": "string", "description": "The exact content of the line immediately after end_lid. Highly recommended for safety."}
@@ -185,7 +179,7 @@ pub fn edit_file_tool_schema() -> Tool {
                                                 "description": "Insert a new block of lines after a specific line. Use `_START_OF_FILE_` as the `after_lid` to insert at the top of the file.",
                                                 "properties": {
                                                     "op": {"const": "i"},
-                                                    "after_lid": {"type": "string", "description": "The line identifier after which to insert. MUST be 'LID3000' or '_START_OF_FILE'."},
+                                                    "after_lid": {"type": "string", "description": "The line identifier after which to insert. Use '_START_OF_FILE'."},
                                                     "content": {"type": "array", "items": {"type": "string"}, "description": "The new lines of content to insert."},
                                                     "context_before": {"type": "string", "description": "The exact content of the `after_lid` line. Highly recommended for safety."},
                                                     "context_after": {"type": "string", "description": "The exact content of the line immediately after `after_lid`. Highly recommended for safety."}
@@ -240,21 +234,16 @@ pub fn edit_file_tool_schema() -> Tool {
     }
 }
 
-/// Strips the `LID...: ` prefix from a line, if present.
+/// Strips the `...: ` prefix from a line, if present.
 /// This makes the context check more robust, as the LLM often includes the LID
 /// in the context string.
-pub(crate) fn strip_lid_prefix(line: &str) -> &str {
+pub(crate) fn strip_prefix(line: &str) -> &str {
     if let Some(colon_pos) = line.find(':') {
-        let potential_lid = &line[..colon_pos];
-        if potential_lid.starts_with("LID")
-            && potential_lid[3..].chars().all(|c| c.is_ascii_digit())
-        {
-            // It looks like a LID. Skip the colon and any leading whitespace.
-            let after_colon = &line[colon_pos + 1..];
-            return after_colon.trim_start();
-        }
+        // Assume that if a colon is present, the part before it is a line identifier
+        // that the LLM included, and we should ignore it for the context check.
+        let after_colon = &line[colon_pos + 1..];
+        return after_colon.trim_start();
     }
-    // If it doesn't look like it has a LID prefix, return the whole string.
     line
 }
 
@@ -272,9 +261,9 @@ pub(crate) fn verify_patch_context(
         PatchOperation::Insert(op) => {
             if let Some(ref provided_context_before) = op.context_before {
                 if op.after_lid != "_START_OF_FILE_" {
-                    let expected_content = strip_lid_prefix(provided_context_before);
-                    let after_lid_num = FileState::parse_lid(&op.after_lid)?;
-                    match file_state.lines.get(&after_lid_num) {
+                    let expected_content = strip_prefix(provided_context_before);
+                    let after_lid_key = FileState::parse_index(&op.after_lid)?;
+                    match file_state.lines.get(&after_lid_key) {
                         Some(actual_line) => {
                             if normalize_whitespace(actual_line)
                                 != normalize_whitespace(expected_content)
@@ -297,23 +286,31 @@ pub(crate) fn verify_patch_context(
                 }
             }
             if let Some(ref provided_context_after) = op.context_after {
-                let expected_content = strip_lid_prefix(provided_context_after);
-                let after_lid_num = if op.after_lid == "_START_OF_FILE_" {
-                    0
+                let expected_content = strip_prefix(provided_context_after);
+                let after_lid_key = if op.after_lid == "_START_OF_FILE_" {
+                    None
                 } else {
-                    FileState::parse_lid(&op.after_lid)?
+                    Some(FileState::parse_index(&op.after_lid)?)
                 };
-                match file_state.lines.range(after_lid_num + 1..).next() {
+
+                let mut next_item_query = file_state.lines.range((
+                    after_lid_key
+                        .as_ref()
+                        .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded),
+                    std::ops::Bound::Unbounded,
+                ));
+
+                match next_item_query.next() {
                     Some((lid, actual_line)) => {
                         if normalize_whitespace(actual_line)
                             != normalize_whitespace(expected_content)
                         {
                             return Err(anyhow!(
-                                "ContextAfter mismatch for insert after {}. AI provided '{}', but file has '{}' at LID{}. (Whitespace-insensitive comparison failed)",
+                                "ContextAfter mismatch for insert after {}. AI provided '{}', but file has '{}' at index {}. (Whitespace-insensitive comparison failed)",
                                 op.after_lid,
                                 provided_context_after.trim(),
                                 actual_line.trim(),
-                                lid
+                                lid.to_string()
                             ));
                         }
                     }
@@ -330,20 +327,20 @@ pub(crate) fn verify_patch_context(
             }
         }
         PatchOperation::Replace(op) => {
-            let start_lid_num = FileState::parse_lid(&op.start_lid)?;
+            let start_lid_key = FileState::parse_index(&op.start_lid)?;
             if let Some(ref provided_context_before) = op.context_before {
-                let expected_content = strip_lid_prefix(provided_context_before);
-                match file_state.lines.range(..start_lid_num).next_back() {
+                let expected_content = strip_prefix(provided_context_before);
+                match file_state.lines.range(..start_lid_key).next_back() {
                     Some((lid, actual_line)) => {
                         if normalize_whitespace(actual_line)
                             != normalize_whitespace(expected_content)
                         {
                             return Err(anyhow!(
-                                "ContextBefore mismatch at {}. AI provided '{}', but file has '{}' at LID{}. (Whitespace-insensitive comparison failed)",
+                                "ContextBefore mismatch at {}. AI provided '{}', but file has '{}' at index {}. (Whitespace-insensitive comparison failed)",
                                 op.start_lid,
                                 provided_context_before.trim(),
                                 actual_line.trim(),
-                                lid
+                                lid.to_string()
                             ));
                         }
                     }
@@ -357,20 +354,20 @@ pub(crate) fn verify_patch_context(
                     }
                 }
             }
-            let end_lid_num = FileState::parse_lid(&op.end_lid)?;
+            let end_lid_key = FileState::parse_index(&op.end_lid)?;
             if let Some(ref provided_context_after) = op.context_after {
-                let expected_content = strip_lid_prefix(provided_context_after);
-                match file_state.lines.range(end_lid_num + 1..).next() {
+                let expected_content = strip_prefix(provided_context_after);
+                match file_state.lines.range(end_lid_key..).nth(1) {
                     Some((lid, actual_line)) => {
                         if normalize_whitespace(actual_line)
                             != normalize_whitespace(expected_content)
                         {
                             return Err(anyhow!(
-                                "ContextAfter mismatch at {}. AI provided '{}', but file has '{}' at LID{}. (Whitespace-insensitive comparison failed)",
+                                "ContextAfter mismatch at {}. AI provided '{}', but file has '{}' at index {}. (Whitespace-insensitive comparison failed)",
                                 op.end_lid,
                                 provided_context_after.trim(),
                                 actual_line.trim(),
-                                lid
+                                lid.to_string()
                             ));
                         }
                     }
@@ -389,14 +386,6 @@ pub(crate) fn verify_patch_context(
     Ok(())
 }
 
-/// The main execution function for the `edit_file` tool.
-///
-/// This function orchestrates the entire patch process:
-/// 1.  Validates the file path is editable.
-/// 2.  Retrieves the current `FileState` from the `FileStateManager`.
-/// 3.  Performs the critical hash check to ensure state consistency.
-/// 4.  Delegates the patch application, diffing, and file writing to the `FileState`.
-/// 5.  Returns the generated diff and the new short `lif_hash` to the LLM.
 pub fn execute_file_operations(
     args: &FileOperationArgs,
     file_state_manager: &mut FileStateManager,

@@ -24,20 +24,12 @@
 use crate::diff;
 use crate::patch::PatchOperation;
 use anyhow::{Result, anyhow};
+use fractional_index::FractionalIndex;
 use serde::Deserialize;
 use sha1::{Digest, Sha1};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
-
-/// The default gap between Line Identifiers (LIDs) when a file is first read.
-///
-/// ### Reasoning
-/// Using large, gapped integers (e.g., 1000, 2000, 3000) provides ample "space"
-/// for future insertions between any two existing lines without requiring a re-indexing
-/// of the entire file. This ensures that LIDs remain stable throughout the editing session,
-/// which is critical for the LLM's ability to reference lines reliably.
-pub const STARTING_LID_GAP: u64 = 1000;
 
 /// Represents a 1-indexed, inclusive range of lines.
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -56,7 +48,7 @@ pub struct FileState {
     /// ### Reasoning
     /// A `BTreeMap` is used because it keeps the lines sorted by LID automatically, which
     /// makes it efficient to reconstruct the file and to find ranges for patching operations.
-    pub lines: BTreeMap<u64, String>,
+    pub lines: BTreeMap<FractionalIndex, String>,
     /// The current SHA-1 hash of the LIF content, used for state synchronization.
     /// This hash acts as a version identifier for the file's state.
     pub lif_hash: String,
@@ -70,11 +62,13 @@ impl FileState {
     /// This function generates the initial LIDs and computes the first hash.
     pub fn new(path: PathBuf, content: &str) -> Self {
         let mut lines = BTreeMap::new();
-        // Use `lines()` to correctly handle different line endings and avoid
-        // issues with trailing newlines.
-        for (i, line_content) in content.lines().enumerate() {
-            let lid = (i as u64 + 1) * STARTING_LID_GAP;
-            lines.insert(lid, line_content.to_string());
+        let mut last_index: Option<FractionalIndex> = None;
+
+        for line_content in content.lines() {
+            // `FractionalIndex::new` with `None` for the second argument generates an index after the first.
+            let new_index = FractionalIndex::new(last_index.as_ref(), None).unwrap();
+            lines.insert(new_index.clone(), line_content.to_string());
+            last_index = Some(new_index);
         }
 
         let mut initial_state = Self {
@@ -103,26 +97,47 @@ impl FileState {
         for operation in patch {
             match operation {
                 PatchOperation::Insert(op) => {
-                    let new_lids =
-                        Self::generate_new_lids(&temp_lines, &op.after_lid, op.content.len())?;
-                    for (lid, line_content) in new_lids.iter().zip(op.content.iter()) {
-                        temp_lines.insert(*lid, line_content.clone());
+                    let after_index = if op.after_lid == "_START_OF_FILE_" {
+                        None
+                    } else {
+                        Some(Self::parse_index(&op.after_lid)?)
+                    };
+
+                    let next_index = temp_lines
+                        .range((
+                            after_index
+                                .as_ref()
+                                .map_or(std::ops::Bound::Unbounded, |k| {
+                                    std::ops::Bound::Excluded(k)
+                                }),
+                            std::ops::Bound::Unbounded,
+                        ))
+                        .next()
+                        .map(|(k, _)| k.clone());
+
+                    let mut last_gen_index = after_index;
+                    for line_content in op.content.iter() {
+                        let new_index =
+                            FractionalIndex::new(last_gen_index.as_ref(), next_index.as_ref())
+                                .unwrap();
+                        temp_lines.insert(new_index.clone(), line_content.clone());
+                        last_gen_index = Some(new_index);
                     }
                 }
                 PatchOperation::Replace(op) => {
-                    let start_lid_num = Self::parse_lid(&op.start_lid)?;
-                    let end_lid_num = Self::parse_lid(&op.end_lid)?;
+                    let start_index = Self::parse_index(&op.start_lid)?;
+                    let end_index = Self::parse_index(&op.end_lid)?;
 
-                    if !temp_lines.contains_key(&start_lid_num) {
+                    if !temp_lines.contains_key(&start_index) {
                         return Err(anyhow!(
                             "start_lid '{}' does not exist in file",
                             op.start_lid
                         ));
                     }
-                    if !temp_lines.contains_key(&end_lid_num) {
+                    if !temp_lines.contains_key(&end_index) {
                         return Err(anyhow!("end_lid '{}' does not exist in file", op.end_lid));
                     }
-                    if start_lid_num > end_lid_num {
+                    if start_index > end_index {
                         return Err(anyhow!(
                             "start_lid '{}' cannot be numerically greater than end_lid '{}'",
                             op.start_lid,
@@ -130,30 +145,26 @@ impl FileState {
                         ));
                     }
 
-                    let keys_to_remove: Vec<_> = temp_lines
-                        .keys()
-                        .filter(|&&k| k >= start_lid_num && k <= end_lid_num)
-                        .copied()
-                        .collect();
+                    // Keys to remove
+                    temp_lines.retain(|k, _| k < &start_index || k > &end_index);
 
-                    for k in keys_to_remove {
-                        temp_lines.remove(&k);
-                    }
+                    let after_index_for_insert =
+                        temp_lines.range(..&start_index).next_back().map(|(k, _)| k);
 
-                    let after_lid_for_insert = temp_lines
-                        .range(..start_lid_num)
-                        .next_back()
-                        .map(|(k, _)| format!("LID{k}"))
-                        .unwrap_or_else(|| "_START_OF_FILE_".to_string());
+                    let next_index_for_insert = temp_lines
+                        .range(&start_index..)
+                        .next()
+                        .map(|(k, _)| k.clone());
 
-                    let new_lids = Self::generate_new_lids(
-                        &temp_lines,
-                        &after_lid_for_insert,
-                        op.content.len(),
-                    )?;
-
-                    for (lid, line_content) in new_lids.iter().zip(op.content.iter()) {
-                        temp_lines.insert(*lid, line_content.clone());
+                    let mut last_gen_index = after_index_for_insert.cloned();
+                    for line_content in op.content.iter() {
+                        let new_index = FractionalIndex::new(
+                            last_gen_index.as_ref(),
+                            next_index_for_insert.as_ref(),
+                        )
+                        .unwrap();
+                        temp_lines.insert(new_index.clone(), line_content.clone());
+                        last_gen_index = Some(new_index);
                     }
                 }
             }
@@ -230,9 +241,9 @@ impl FileState {
                     .lines
                     .iter()
                     .enumerate()
-                    .map(|(i, (lid, content))| {
+                    .map(|(i, (index, content))| {
                         let line_num = i + 1;
-                        format!("{line_num:<5}LID{lid}: {content}")
+                        format!("{line_num:<5}{}: {content}", index.to_string())
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
@@ -268,9 +279,9 @@ impl FileState {
                     let range_content = all_lines[start_idx..=end_idx]
                         .iter()
                         .enumerate()
-                        .map(|(line_offset, (lid, content))| {
+                        .map(|(line_offset, (index, content))| {
                             let line_num = start_idx + line_offset + 1;
-                            format!("{line_num:<5}LID{lid}: {content}")
+                            format!("{line_num:<5}{}: {content}", index.to_string())
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -297,8 +308,8 @@ impl FileState {
         start_lid_str: &str,
         end_lid_str: &str,
     ) -> Result<Vec<String>> {
-        let start_lid = Self::parse_lid(start_lid_str)?;
-        let end_lid = Self::parse_lid(end_lid_str)?;
+        let start_lid = Self::parse_index(start_lid_str)?;
+        let end_lid = Self::parse_index(end_lid_str)?;
 
         if start_lid > end_lid {
             return Err(anyhow!(
@@ -308,7 +319,7 @@ impl FileState {
 
         let lines_in_range: Vec<String> = self
             .lines
-            .range(start_lid..=end_lid)
+            .range(start_lid.clone()..=end_lid.clone())
             .map(|(_, content)| content.clone())
             .collect();
 
@@ -344,77 +355,14 @@ impl FileState {
     pub(crate) fn get_lif_content_for_hashing(&self) -> String {
         self.lines
             .iter()
-            .map(|(lid, content)| format!("LID{lid}: {content}"))
+            .map(|(index, content)| format!("{}: {}", index.to_string(), content))
             .collect::<Vec<String>>()
             .join("\n")
     }
 
     /// Parses a string like "LID1234" into its numeric form `1234`.
-    pub fn parse_lid(lid_str: &str) -> Result<u64> {
-        if !lid_str.starts_with("LID") {
-            return Err(anyhow!("Invalid LID format: {lid_str}"));
-        }
-        lid_str[3..]
-            .parse::<u64>()
-            .map_err(|_| anyhow!("Invalid LID number: {lid_str}"))
-    }
-
-    /// Calculates new LIDs for an insertion operation.
-    ///
-    /// ### Reasoning
-    /// This is the core of LID generation. To insert `N` lines after a given LID,
-    /// it finds the space between the `after_lid` and the `next_lid`. It then divides
-    /// this space by `N+1` to find an even `step`, and places the new LIDs at these
-    /// stepped intervals (e.g., `after_lid + step`, `after_lid + 2*step`, ...).
-    /// This "integer averaging" approach ensures new lines can always be inserted
-    /// as long as there is a gap of at least `N` between two LIDs.
-    /// It also handles the edge cases of inserting at the beginning (`_START_OF_FILE_`)
-    /// or end of the file.
-    pub(crate) fn generate_new_lids(
-        lines: &BTreeMap<u64, String>,
-        after_lid_str: &str,
-        count: usize,
-    ) -> Result<Vec<u64>> {
-        let mut new_lids = Vec::with_capacity(count);
-
-        if after_lid_str == "_START_OF_FILE_" {
-            let next_lid = lines.keys().next().copied().unwrap_or(STARTING_LID_GAP);
-            let step = next_lid / (count as u64 + 1);
-
-            if step == 0 {
-                return Err(anyhow!(
-                    "Not enough space to insert at the beginning of the file before LID{next_lid}."
-                ));
-            }
-
-            for i in 1..=count {
-                new_lids.push(i as u64 * step);
-            }
-        } else {
-            let after_lid = Self::parse_lid(after_lid_str)?;
-            if !lines.contains_key(&after_lid) {
-                return Err(anyhow!("LID not found: {after_lid_str}"));
-            }
-
-            let next_lid = lines
-                .range(after_lid + 1..)
-                .next()
-                .map(|(&k, _)| k)
-                .unwrap_or_else(|| after_lid + STARTING_LID_GAP);
-
-            let range = next_lid - after_lid;
-            let step = range / (count as u64 + 1);
-
-            if step == 0 {
-                return Err(anyhow!(
-                    "Cannot insert {count} lines between LID{after_lid} and LID{next_lid}. Not enough space."
-                ));
-            }
-
-            for i in 1..=count {
-                new_lids.push(after_lid + i as u64 * step);
-            }
-        }
-        Ok(new_lids)
+    pub fn parse_index(index_str: &str) -> Result<FractionalIndex> {
+        FractionalIndex::from_string(index_str)
+            .map_err(|_| anyhow!("Invalid index format: {index_str}"))
     }
 }
