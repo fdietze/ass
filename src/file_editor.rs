@@ -331,7 +331,10 @@ pub(crate) fn normalize_whitespace(s: &str) -> String {
 }
 
 /// Verifies that the optional context lines in a patch operation match the actual file state.
-pub(crate) fn verify_patch_context(operation: &PatchOperation, file_state: &FileState) -> Result<()> {
+pub(crate) fn verify_patch_context(
+    operation: &PatchOperation,
+    file_state: &FileState,
+) -> Result<()> {
     match operation {
         PatchOperation::Insert(op) => {
             if let Some(ref provided_context_before) = op.context_before {
