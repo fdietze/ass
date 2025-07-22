@@ -1,4 +1,6 @@
-use crate::{config::Config, file_state_manager::FileStateManager, permissions};
+use crate::{
+    config::Config, file_state::RangeSpec, file_state_manager::FileStateManager, permissions,
+};
 use anyhow::Result;
 use openrouter_api::models::tool::{FunctionDescription, Tool};
 use serde::Deserialize;
@@ -7,8 +9,7 @@ use std::path::Path;
 #[derive(Deserialize, Debug)]
 pub struct FileReadSpec {
     pub file_path: String,
-    pub start_line: Option<usize>,
-    pub end_line: Option<usize>,
+    pub ranges: Option<Vec<RangeSpec>>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -22,6 +23,7 @@ pub fn read_file_tool_schema() -> Tool {
             name: "read_file".to_string(),
             description: Some(
                 "Reads one or more files into context. Can read full files or specific line ranges.
+You can request multiple, non-contiguous ranges from a single file in one go.
 Each file's output is separated. If more than one file is requested, the output for each file will be preceded by a header. If you are reading because of compiler or linter errors, only read specific ranges.
 IMPORTANT: The `edit_file` tool provides the new `lif_hash` after a successful edit. If you have this hash and the necessary LIDs, **don't read the file again**. Only use this tool for initial reads."
                     .to_string(),
@@ -39,13 +41,23 @@ IMPORTANT: The `edit_file` tool provides the new `lif_hash` after a successful e
                                     "type": "string",
                                     "description": "The relative path to the file to be read."
                                 },
-                                "start_line": {
-                                    "type": "integer",
-                                    "description": "The 1-indexed, inclusive, starting line number. Defaults to the beginning of the file."
-                                },
-                                "end_line": {
-                                    "type": "integer",
-                                    "description": "The 1-indexed, inclusive, ending line number. Defaults to the end of the file."
+                                "ranges": {
+                                    "type": "array",
+                                    "description": "A list of line ranges to read from the file. If omitted or empty, the entire file is read.",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "start_line": {
+                                                "type": "integer",
+                                                "description": "The 1-indexed, inclusive, starting line number of the range."
+                                            },
+                                            "end_line": {
+                                                "type": "integer",
+                                                "description": "The 1-indexed, inclusive, ending line number of the range."
+                                            }
+                                        },
+                                        "required": ["start_line", "end_line"]
+                                    }
                                 }
                             },
                             "required": ["file_path"]
@@ -56,6 +68,33 @@ IMPORTANT: The `edit_file` tool provides the new `lif_hash` after a successful e
             }),
         },
     }
+}
+
+pub fn merge_ranges(mut ranges: Vec<RangeSpec>) -> Vec<RangeSpec> {
+    if ranges.is_empty() {
+        return vec![];
+    }
+
+    // Sort by start_line, then by end_line as a tie-breaker
+    ranges.sort_by(|a, b| {
+        a.start_line
+            .cmp(&b.start_line)
+            .then(a.end_line.cmp(&b.end_line))
+    });
+
+    let mut merged = vec![ranges[0].clone()];
+
+    for next in ranges.into_iter().skip(1) {
+        let last = merged.last_mut().unwrap();
+        // Merge if overlapping or adjacent. The `+ 1` handles adjacent ranges.
+        if next.start_line <= last.end_line + 1 {
+            last.end_line = std::cmp::max(last.end_line, next.end_line);
+        } else {
+            merged.push(next);
+        }
+    }
+
+    merged
 }
 
 pub fn execute_read_file(
@@ -74,7 +113,14 @@ pub fn execute_read_file(
             permissions::is_path_accessible(path_to_read, &config.accessible_paths)?;
             // Always force a reload from disk to ensure the content is fresh
             let file_state = file_state_manager.force_reload_file(file_path_str)?;
-            Ok(file_state.get_lif_string_for_range(request.start_line, request.end_line))
+
+            let merged_ranges = request
+                .ranges
+                .as_ref()
+                .map(|r| merge_ranges(r.clone()))
+                .filter(|r| !r.is_empty());
+
+            Ok(file_state.get_lif_string_for_ranges(merged_ranges.as_deref()))
         })();
 
         let output = match file_content_result {
@@ -117,8 +163,7 @@ mod tests {
         let args = FileReadArgs {
             files: vec![FileReadSpec {
                 file_path: file_path.clone(),
-                start_line: None,
-                end_line: None,
+                ranges: None,
             }],
         };
         let mut file_state_manager = FileStateManager::new();
@@ -151,8 +196,7 @@ mod tests {
         let args = FileReadArgs {
             files: vec![FileReadSpec {
                 file_path: file_path.clone(),
-                start_line: None,
-                end_line: None,
+                ranges: None,
             }],
         };
         let mut file_state_manager = FileStateManager::new();
@@ -179,8 +223,10 @@ mod tests {
         let args = FileReadArgs {
             files: vec![FileReadSpec {
                 file_path: file_path.clone(),
-                start_line: Some(2),
-                end_line: Some(4),
+                ranges: Some(vec![RangeSpec {
+                    start_line: 2,
+                    end_line: 4,
+                }]),
             }],
         };
         let mut file_state_manager = FileStateManager::new();
@@ -192,6 +238,42 @@ mod tests {
         assert!(result.contains("3    LID3000: 3"));
         assert!(result.contains("4    LID4000: 4"));
         assert!(!result.contains("5    LID5000: 5"));
+    }
+
+    #[test]
+    fn test_read_multiple_ranges_in_one_file() {
+        let (_tmp_dir, file_path) = setup_test_file("1\n2\n3\n4\n5\n6\n7\n8\n9\n10");
+        let config = Config {
+            accessible_paths: vec![_tmp_dir.path().to_str().unwrap().to_string()],
+            ..Default::default()
+        };
+        let args = FileReadArgs {
+            files: vec![FileReadSpec {
+                file_path: file_path.clone(),
+                ranges: Some(vec![
+                    RangeSpec {
+                        start_line: 2,
+                        end_line: 3,
+                    },
+                    RangeSpec {
+                        start_line: 8,
+                        end_line: 9,
+                    },
+                ]),
+            }],
+        };
+        let mut file_state_manager = FileStateManager::new();
+
+        let result = execute_read_file(&args, &config, &mut file_state_manager).unwrap();
+        assert!(result.contains("Lines: 2-3, 8-9/10"));
+        assert!(!result.contains("1    LID1000: 1"));
+        assert!(result.contains("2    LID2000: 2"));
+        assert!(result.contains("3    LID3000: 3"));
+        assert!(!result.contains("4    LID4000: 4"));
+        assert!(!result.contains("7    LID7000: 7"));
+        assert!(result.contains("8    LID8000: 8"));
+        assert!(result.contains("9    LID9000: 9"));
+        assert!(!result.contains("10   LID10000: 10"));
     }
 
     #[test]
@@ -208,13 +290,11 @@ mod tests {
             files: vec![
                 FileReadSpec {
                     file_path: file_path1.clone(),
-                    start_line: None,
-                    end_line: None,
+                    ranges: None,
                 },
                 FileReadSpec {
                     file_path: file_path2.to_str().unwrap().to_string(),
-                    start_line: None,
-                    end_line: None,
+                    ranges: None,
                 },
             ],
         };
@@ -241,13 +321,11 @@ mod tests {
             files: vec![
                 FileReadSpec {
                     file_path: file_path1.clone(),
-                    start_line: None,
-                    end_line: None,
+                    ranges: None,
                 },
                 FileReadSpec {
                     file_path: non_existent_path.to_string(),
-                    start_line: None,
-                    end_line: None,
+                    ranges: None,
                 },
             ],
         };
@@ -271,8 +349,7 @@ mod tests {
         let args = FileReadArgs {
             files: vec![FileReadSpec {
                 file_path: file_path_str.clone(),
-                start_line: None,
-                end_line: None,
+                ranges: None,
             }],
         };
         let mut file_state_manager = FileStateManager::new();
@@ -280,6 +357,118 @@ mod tests {
         let result = execute_read_file(&args, &config, &mut file_state_manager).unwrap();
         assert!(result.contains("[File is empty]"));
         assert!(result.contains("Lines: 0-0/0"));
+    }
+
+    #[test]
+    fn test_merge_ranges_empty() {
+        assert!(merge_ranges(vec![]).is_empty());
+    }
+
+    #[test]
+    fn test_merge_ranges_single() {
+        let ranges = vec![RangeSpec {
+            start_line: 1,
+            end_line: 5,
+        }];
+        assert_eq!(merge_ranges(ranges.clone()), ranges);
+    }
+
+    #[test]
+    fn test_merge_ranges_no_overlap() {
+        let ranges = vec![
+            RangeSpec {
+                start_line: 1,
+                end_line: 5,
+            },
+            RangeSpec {
+                start_line: 7,
+                end_line: 10,
+            },
+        ];
+        assert_eq!(merge_ranges(ranges.clone()), ranges);
+    }
+
+    #[test]
+    fn test_merge_ranges_overlapping() {
+        let ranges = vec![
+            RangeSpec {
+                start_line: 1,
+                end_line: 5,
+            },
+            RangeSpec {
+                start_line: 4,
+                end_line: 8,
+            },
+        ];
+        let expected = vec![RangeSpec {
+            start_line: 1,
+            end_line: 8,
+        }];
+        assert_eq!(merge_ranges(ranges), expected);
+    }
+
+    #[test]
+    fn test_merge_ranges_adjacent() {
+        let ranges = vec![
+            RangeSpec {
+                start_line: 1,
+                end_line: 5,
+            },
+            RangeSpec {
+                start_line: 6,
+                end_line: 10,
+            },
+        ];
+        let expected = vec![RangeSpec {
+            start_line: 1,
+            end_line: 10,
+        }];
+        assert_eq!(merge_ranges(ranges), expected);
+    }
+
+    #[test]
+    fn test_merge_ranges_contained() {
+        let ranges = vec![
+            RangeSpec {
+                start_line: 1,
+                end_line: 10,
+            },
+            RangeSpec {
+                start_line: 3,
+                end_line: 7,
+            },
+        ];
+        let expected = vec![RangeSpec {
+            start_line: 1,
+            end_line: 10,
+        }];
+        assert_eq!(merge_ranges(ranges), expected);
+    }
+
+    #[test]
+    fn test_merge_ranges_complex() {
+        let ranges = vec![
+            RangeSpec {
+                start_line: 10,
+                end_line: 20,
+            },
+            RangeSpec {
+                start_line: 22,
+                end_line: 30,
+            },
+            RangeSpec {
+                start_line: 15,
+                end_line: 25,
+            }, // Overlaps with both
+        ];
+        let merged = merge_ranges(ranges);
+        assert_eq!(
+            merged,
+            vec![RangeSpec {
+                start_line: 10,
+                end_line: 30
+            }]
+        );
     }
 
     // Omitted other tests like truncation, out_of_bounds, etc. for brevity

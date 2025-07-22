@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use crate::{
-    file_state::FileState,
+    file_state::{FileState, RangeSpec},
     patch::{InsertOperation, PatchOperation, ReplaceOperation},
 };
 use console::style;
@@ -55,7 +55,10 @@ fn test_get_lif_string_for_range() {
     let (_tmp_dir, file_path) = setup_test_file("1\n2\n3\n4\n5");
     let state = FileState::new(file_path.clone(), "1\n2\n3\n4\n5");
 
-    let partial_representation = state.get_lif_string_for_range(Some(2), Some(4));
+    let partial_representation = state.get_lif_string_for_ranges(Some(&[RangeSpec {
+        start_line: 2,
+        end_line: 4,
+    }]));
 
     let project_root = std::env::current_dir().unwrap();
     let relative_path = file_path.strip_prefix(&project_root).unwrap_or(&file_path);

@@ -24,6 +24,7 @@
 use crate::diff;
 use crate::patch::PatchOperation;
 use anyhow::{Result, anyhow};
+use serde::Deserialize;
 use sha1::{Digest, Sha1};
 use std::collections::BTreeMap;
 use std::fs;
@@ -37,6 +38,13 @@ use std::path::PathBuf;
 /// of the entire file. This ensures that LIDs remain stable throughout the editing session,
 /// which is critical for the LLM's ability to reference lines reliably.
 pub const STARTING_LID_GAP: u64 = 1000;
+
+/// Represents a 1-indexed, inclusive range of lines.
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct RangeSpec {
+    pub start_line: usize,
+    pub end_line: usize,
+}
 
 /// Represents the in-memory state of a single "open" file using the LIF protocol.
 #[derive(Debug)]
@@ -183,18 +191,15 @@ impl FileState {
     /// Generates the complete LIF representation of the file to be sent to the LLM.
     /// This includes the header with the file path and the crucial `lif_hash`.
     pub fn get_lif_representation(&self) -> String {
-        self.get_lif_string_for_range(None, None)
+        self.get_lif_string_for_ranges(None)
     }
 
-    /// Generates a LIF representation for a specific line range.
+    /// Generates a LIF representation for specific line ranges.
     ///
     /// This is the canonical way to display file content to the LLM. It generates
     /// a consistent header and formats the selected lines with their LIDs.
-    pub fn get_lif_string_for_range(
-        &self,
-        start_line: Option<usize>,
-        end_line: Option<usize>,
-    ) -> String {
+    /// If `ranges` is `None` or empty, it renders the entire file.
+    pub fn get_lif_string_for_ranges(&self, ranges: Option<&[RangeSpec]>) -> String {
         let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let relative_path = self.path.strip_prefix(&project_root).unwrap_or(&self.path);
         let short_hash = self.get_short_hash();
@@ -207,28 +212,73 @@ impl FileState {
             );
         }
 
-        let line_count = self.lines.len();
-        let start_line_num = start_line.unwrap_or(1);
-        let end_line_num = end_line.unwrap_or(line_count);
+        let total_lines = self.lines.len();
+
+        let (lines_header_part, body) = match ranges {
+            None | Some([]) => {
+                // Full file read
+                let header = format!("1-{total_lines}/{total_lines}");
+                let content_str = self
+                    .lines
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (lid, content))| {
+                        let line_num = i + 1;
+                        format!("{line_num:<5}LID{lid}: {content}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                (header, content_str)
+            }
+            Some(merged_ranges) => {
+                // Ranged read
+                let header = format!(
+                    "{}/{}",
+                    merged_ranges
+                        .iter()
+                        .map(|r| format!("{}-{}", r.start_line, r.end_line))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    total_lines
+                );
+
+                let mut content_parts = Vec::new();
+                let all_lines: Vec<_> = self.lines.iter().collect();
+
+                for (i, range) in merged_ranges.iter().enumerate() {
+                    if i > 0 {
+                        content_parts.push("...".to_string());
+                    }
+                    // Clamp ranges to be within the bounds of the file
+                    let start_idx = range.start_line.saturating_sub(1).min(total_lines);
+                    let end_idx = range.end_line.saturating_sub(1).min(total_lines);
+
+                    if start_idx > end_idx {
+                        continue;
+                    }
+
+                    let range_content = all_lines[start_idx..=end_idx]
+                        .iter()
+                        .enumerate()
+                        .map(|(line_offset, (lid, content))| {
+                            let line_num = start_idx + line_offset + 1;
+                            format!("{line_num:<5}LID{lid}: {content}")
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+
+                    content_parts.push(range_content);
+                }
+                (header, content_parts.join("\n"))
+            }
+        };
 
         let header = format!(
-            "File: {} | Hash: {} | Lines: {start_line_num}-{end_line_num}/{line_count}",
+            "File: {} | Hash: {} | Lines: {}",
             relative_path.display(),
-            short_hash
+            short_hash,
+            lines_header_part
         );
-
-        let body = self
-            .lines
-            .iter()
-            .enumerate()
-            .skip(start_line_num.saturating_sub(1))
-            .take(end_line_num - start_line_num + 1)
-            .map(|(i, (lid, content))| {
-                let line_num = i + 1;
-                format!("{line_num:<5}LID{lid}: {content}")
-            })
-            .collect::<Vec<String>>()
-            .join("\n");
 
         format!("{header}\n{body}")
     }
