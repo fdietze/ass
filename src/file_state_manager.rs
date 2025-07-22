@@ -26,14 +26,14 @@ impl FileStateManager {
     }
 
     /// The main entry point for accessing a file's state.
-    /// If the file is already in the manager, it returns the cached mutable state.
-    /// If not, it reads the file from disk, creates a new `FileState`, caches it,
-    /// and then returns the new state.
+    /// If the file is already in the manager and its content is fresh,
+    /// it returns the cached mutable state. Otherwise, it reads the file
+    /// from disk, creates a new `FileState`, caches it, and then returns it.
     pub fn open_file(&mut self, path_str: &str) -> Result<&mut FileState> {
         let canonical_path = self.get_canonical_path(path_str)?;
         let canonical_key = canonical_path.to_string_lossy().to_string();
 
-        if !self.open_files.contains_key(&canonical_key) {
+        if self.is_content_stale(&canonical_key, &canonical_path)? {
             let content = fs::read_to_string(&canonical_path)?;
             let file_state = FileState::new(canonical_path, &content);
             self.open_files.insert(canonical_key.clone(), file_state);
@@ -42,18 +42,20 @@ impl FileStateManager {
         Ok(self.open_files.get_mut(&canonical_key).unwrap())
     }
 
-    /// Forces a re-read of the file from disk, overwriting any cached state.
-    /// This ensures that the returned `FileState` is perfectly up-to-date with
-    /// the filesystem, with freshly assigned LIDs.
-    pub fn force_reload_file(&mut self, path_str: &str) -> Result<&mut FileState> {
-        let canonical_path = self.get_canonical_path(path_str)?;
-        let canonical_key = canonical_path.to_string_lossy().to_string();
-
-        let content = fs::read_to_string(&canonical_path)?;
-        let file_state = FileState::new(canonical_path, &content);
-        self.open_files.insert(canonical_key.clone(), file_state);
-
-        Ok(self.open_files.get_mut(&canonical_key).unwrap())
+    /// Checks if the cached file state is stale compared to the disk.
+    /// Returns true if the file is not in the cache or if the content differs.
+    fn is_content_stale(&self, key: &str, path: &Path) -> Result<bool> {
+        match self.open_files.get(key) {
+            Some(cached_state) => {
+                let disk_content = fs::read_to_string(path)?;
+                // Compare the reconstructed content from the cache with the actual disk content.
+                Ok(cached_state.get_full_content() != disk_content)
+            }
+            None => {
+                // Not in cache, so it's "stale" in the sense that we need to load it.
+                Ok(true)
+            }
+        }
     }
 
     fn get_canonical_path(&self, path_str: &str) -> Result<PathBuf> {
@@ -97,7 +99,7 @@ mod tests {
     }
 
     #[test]
-    fn test_state_manager_force_reload() {
+    fn test_state_manager_reloads_on_stale_content() {
         let (_tmp_dir, file_path) = setup_test_file("initial");
         let file_path_str = file_path.to_str().unwrap();
         let mut manager = FileStateManager::new();
@@ -110,19 +112,56 @@ mod tests {
         // Modify file on disk
         fs::write(&file_path, "updated").unwrap();
 
-        // open_file should return the cached version
+        // `open_file` should now detect the change and reload.
         let state2 = manager.open_file(file_path_str).unwrap();
-        assert_eq!(state2.get_full_content(), "initial");
-        assert_eq!(state2.lif_hash, original_hash);
+        assert_eq!(state2.get_full_content(), "updated");
+        assert_ne!(state2.lif_hash, original_hash);
+    }
 
-        // force_reload_file should read from disk
-        let state3 = manager.force_reload_file(file_path_str).unwrap();
-        assert_eq!(state3.get_full_content(), "updated");
-        assert_ne!(state3.lif_hash, original_hash);
+    #[test]
+    fn test_lid_and_hash_are_stable_on_read() {
+        let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2");
+        let file_path_str = file_path.to_str().unwrap();
+        let mut manager = FileStateManager::new();
 
-        // And now a normal open_file should see the reloaded state
-        let state4 = manager.open_file(file_path_str).unwrap();
-        assert_eq!(state4.get_full_content(), "updated");
+        // 1. Open the file and get its initial state.
+        let state = manager.open_file(file_path_str).unwrap();
+        let initial_hash = state.lif_hash.clone();
+        let initial_lids: Vec<_> = state.lines.keys().cloned().collect();
+
+        // 2. Simulate an edit by applying a patch. This happens in memory.
+        let patch = vec![crate::patch::PatchOperation::Insert(
+            crate::patch::InsertOperation {
+                after_lid: initial_lids[0].to_string(),
+                content: vec!["inserted".to_string()],
+                context_before: None,
+                context_after: None,
+            },
+        )];
+        // This writes the change to disk, which is the correct simulation of the tool's flow.
+        state.apply_and_write_patch(&patch).unwrap();
+        let hash_after_edit = state.lif_hash.clone();
+        let lids_after_edit: Vec<_> = state.lines.keys().cloned().collect();
+        assert_ne!(initial_hash, hash_after_edit);
+
+        // 3. Call `open_file` again. Since the file on disk hasn't changed,
+        // it should return the cached state.
+        let state_after_second_read = manager.open_file(file_path_str).unwrap();
+
+        // 4. Verify that the hash and LIDs are unchanged from the in-memory edit.
+        assert_eq!(
+            state_after_second_read.lif_hash, hash_after_edit,
+            "Hash should be stable on read of unchanged file"
+        );
+        assert_eq!(
+            state_after_second_read
+                .lines
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            lids_after_edit,
+            "LIDs should be stable on read of unchanged file"
+        );
     }
 
     #[test]
@@ -139,5 +178,39 @@ mod tests {
         // Second open, should be cached and reflect changes
         let state2 = manager.open_file(file_path.to_str().unwrap()).unwrap();
         assert_eq!(state2.lif_hash, "new_hash");
+    }
+
+    #[test]
+    fn test_reload_on_manual_edit_after_patch() {
+        // This test simulates the user's bug report:
+        // 1. A file is edited by the agent.
+        // 2. The user manually changes the file on disk.
+        // 3. The agent reads the file again and should see the manual changes, not a cached version.
+
+        // Setup a file with a trailing newline, which is crucial for triggering the bug.
+        let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2\n");
+        let file_path_str = file_path.to_str().unwrap();
+        let mut manager = FileStateManager::new();
+
+        // 1. First "edit", which writes to disk and updates the cache.
+        // Due to the bug in `apply_patch`, this will write the file without the trailing newline.
+        let initial_state = manager.open_file(file_path_str).unwrap();
+        let patch = vec![/* an empty patch will still trigger the rewrite */];
+        initial_state.apply_and_write_patch(&patch).unwrap();
+
+        // At this point, the cached state incorrectly believes `ends_with_newline` is false.
+
+        // 2. Manually edit the file on disk to something completely different.
+        fs::write(&file_path, "MANUAL EDIT").unwrap();
+
+        // 3. Open the file again. The manager should detect the manual change.
+        let reloaded_state = manager.open_file(file_path_str).unwrap();
+
+        // 4. Assert that we have the content from the manual edit, not the cached version.
+        assert_eq!(
+            reloaded_state.get_full_content(),
+            "MANUAL EDIT",
+            "Manager should have reloaded the file from disk after a manual edit."
+        );
     }
 }

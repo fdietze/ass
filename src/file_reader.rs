@@ -128,7 +128,7 @@ pub fn execute_read_file(
             let path_to_read = Path::new(file_path_str);
             permissions::is_path_accessible(path_to_read, &config.accessible_paths)?;
             // Always force a reload from disk to ensure the content is fresh
-            let file_state = file_state_manager.force_reload_file(file_path_str)?;
+            let file_state = file_state_manager.open_file(file_path_str)?;
 
             let merged_ranges = request
                 .ranges
@@ -170,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_always_reloads_from_disk() {
+    fn test_read_does_not_reload_from_disk_if_content_is_same() {
         let (_tmp_dir, file_path) = setup_test_file("initial content");
         let config = Config {
             accessible_paths: vec![_tmp_dir.path().to_str().unwrap().to_string()],
@@ -184,22 +184,14 @@ mod tests {
         };
         let mut file_state_manager = FileStateManager::new();
 
-        // First read
+        // First read, get original hash
         let result1 = execute_read_file(&args, &config, &mut file_state_manager).unwrap();
-        assert!(result1.contains("initial content"));
-
-        // Modify the file on disk
-        std::fs::write(&file_path, "updated content").unwrap();
-
-        // Second read should show the updated content
-        let result2 = execute_read_file(&args, &config, &mut file_state_manager).unwrap();
-        assert!(result2.contains("updated content"));
-        assert!(!result2.contains("initial content"));
-
-        // The hash should also be different
         let initial_hash_line = result1.lines().find(|l| l.contains("Hash:")).unwrap();
-        let updated_hash_line = result2.lines().find(|l| l.contains("Hash:")).unwrap();
-        assert_ne!(initial_hash_line, updated_hash_line);
+
+        // Second read should not change the hash
+        let result2 = execute_read_file(&args, &config, &mut file_state_manager).unwrap();
+        let second_hash_line = result2.lines().find(|l| l.contains("Hash:")).unwrap();
+        assert_eq!(initial_hash_line, second_hash_line);
     }
 
     #[test]

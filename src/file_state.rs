@@ -173,14 +173,10 @@ impl FileState {
         self.lines = temp_lines;
 
         // After modifying the lines, we need to update the `ends_with_newline` flag
-        // before we recalculate the hash.
-        if let Some(last_line) = self.lines.values().last() {
-            self.ends_with_newline = last_line.is_empty();
-        } else {
-            // If there are no lines, it's an empty file. An empty file is treated
-            // as not having a trailing newline for hashing purposes.
-            self.ends_with_newline = false;
-        }
+        // before we recalculate the hash. This is the fix: reconstruct the content
+        // and check it directly, rather than using a flawed heuristic.
+        let full_content = self.get_full_content();
+        self.ends_with_newline = full_content.ends_with('\n');
 
         let new_lif_content = self.get_lif_content_for_hashing();
         self.lif_hash = Self::calculate_hash(&new_lif_content);
