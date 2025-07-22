@@ -1,10 +1,53 @@
 use anyhow::Result;
+use clap::Args;
 use serde::{Deserialize, Serialize};
 use std::fs;
 
 const DEFAULT_SYSTEM_PROMPT: &str = "You are a helpful assistant that can execute shell commands.
 When asked to perform a task, use the available `execute_shell_command` tool.
 When you have the final answer, provide it directly without using a tool.";
+
+/// Represents a layer of configuration, either from a file or from the command line.
+/// All fields are optional.
+#[derive(Args, Deserialize, Debug, Default)]
+#[serde(default)]
+pub struct ConfigLayer {
+    /// The model to use for the agent.
+    #[arg(long)]
+    pub model: Option<String>,
+
+    /// The system prompt to use.
+    #[arg(long)]
+    pub system_prompt: Option<String>,
+
+    /// The timeout for API requests in seconds.
+    #[arg(long)]
+    pub timeout_seconds: Option<u64>,
+
+    /// The maximum number of tool-use iterations.
+    #[arg(long)]
+    pub max_iterations: Option<u8>,
+
+    /// The maximum number of lines to read from a file.
+    #[arg(long)]
+    pub max_read_lines: Option<u64>,
+
+    /// Command prefixes that the agent is allowed to execute.
+    #[arg(long, value_delimiter = ',')]
+    pub allowed_command_prefixes: Vec<String>,
+
+    /// Paths to ignore when listing or reading files.
+    #[arg(long, value_delimiter = ',')]
+    pub ignored_paths: Vec<String>,
+
+    /// Paths that the agent is allowed to access.
+    #[arg(long, value_delimiter = ',')]
+    pub accessible_paths: Vec<String>,
+
+    /// Enable or disable the terminal bell.
+    #[arg(long)]
+    pub terminal_bell: Option<bool>,
+}
 
 #[derive(Deserialize, Serialize, Debug)]
 #[serde(default)]
@@ -18,6 +61,40 @@ pub struct Config {
     pub ignored_paths: Vec<String>,
     pub accessible_paths: Vec<String>,
     pub terminal_bell: bool,
+}
+
+impl Config {
+    /// Merges a configuration layer into the current configuration.
+    /// Values in the layer take precedence.
+    pub fn merge(&mut self, layer: &ConfigLayer) {
+        if let Some(model) = &layer.model {
+            self.model = model.clone();
+        }
+        if let Some(system_prompt) = &layer.system_prompt {
+            self.system_prompt = system_prompt.clone();
+        }
+        if let Some(timeout_seconds) = layer.timeout_seconds {
+            self.timeout_seconds = timeout_seconds;
+        }
+        if let Some(max_iterations) = layer.max_iterations {
+            self.max_iterations = max_iterations;
+        }
+        if let Some(max_read_lines) = layer.max_read_lines {
+            self.max_read_lines = max_read_lines;
+        }
+        if !layer.allowed_command_prefixes.is_empty() {
+            self.allowed_command_prefixes = layer.allowed_command_prefixes.clone();
+        }
+        if !layer.ignored_paths.is_empty() {
+            self.ignored_paths = layer.ignored_paths.clone();
+        }
+        if !layer.accessible_paths.is_empty() {
+            self.accessible_paths = layer.accessible_paths.clone();
+        }
+        if let Some(terminal_bell) = layer.terminal_bell {
+            self.terminal_bell = terminal_bell;
+        }
+    }
 }
 
 impl Default for Config {
@@ -41,81 +118,48 @@ impl Default for Config {
     }
 }
 
-pub fn load_or_create() -> Result<Config> {
+/// Loads configuration from defaults, a configuration file, and CLI arguments.
+/// The layers are applied in order, with later layers taking precedence.
+///
+/// 1. `Config::default()` is used as the base.
+/// 2. The `config.toml` file is loaded and merged.
+/// 3. The `cli_layer` from command-line arguments is merged.
+///
+/// The function will also create or update the `config.toml` file to include any
+/// newly available default settings, making them discoverable to the user.
+pub fn load(cli_layer: &ConfigLayer) -> Result<Config> {
     let xdg_dirs = xdg::BaseDirectories::new();
     let config_path = xdg_dirs.place_config_file("ass/config.toml")?;
 
-    if !config_path.exists() {
-        let default_config = Config::default();
-        let toml_string = toml::to_string_pretty(&default_config)?;
+    // Load file layer, or use a default if it doesn't exist or fails to parse.
+    let file_layer: ConfigLayer = if config_path.exists() {
+        let config_string = fs::read_to_string(&config_path)?;
+        toml::from_str(&config_string).unwrap_or_default()
+    } else {
+        ConfigLayer::default()
+    };
 
+    // Determine the state of the config as it should be on disk.
+    let mut config_for_disk = Config::default();
+    config_for_disk.merge(&file_layer);
+
+    // If the on-disk representation is out of date or doesn't exist, write it.
+    let new_disk_toml = toml::to_string_pretty(&config_for_disk)?;
+    let old_disk_toml = fs::read_to_string(&config_path).unwrap_or_default();
+
+    if new_disk_toml != old_disk_toml {
         if let Some(parent) = config_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(&config_path, toml_string)?;
-
-        println!("Created default config at: {}", config_path.display());
-        return Ok(default_config);
+        fs::write(&config_path, new_disk_toml)?;
+        if old_disk_toml.is_empty() {
+            println!("Created default config at: {}", config_path.display());
+        }
     }
 
-    let config_string = fs::read_to_string(&config_path)?;
-    let config: Config = toml::from_str(&config_string)?;
-
-    // Fill in missing fields with default values
-    let default_config = Config::default();
-    let final_config = Config {
-        model: if config.model.is_empty() {
-            default_config.model
-        } else {
-            config.model
-        },
-        system_prompt: if config.system_prompt.is_empty() {
-            default_config.system_prompt
-        } else {
-            config.system_prompt
-        },
-        timeout_seconds: if config.timeout_seconds == 0 {
-            default_config.timeout_seconds
-        } else {
-            config.timeout_seconds
-        },
-        max_iterations: if config.max_iterations == 0 {
-            default_config.max_iterations
-        } else {
-            config.max_iterations
-        },
-        max_read_lines: if config.max_read_lines == 0 {
-            default_config.max_read_lines
-        } else {
-            config.max_read_lines
-        },
-        allowed_command_prefixes: if config.allowed_command_prefixes.is_empty() {
-            default_config.allowed_command_prefixes
-        } else {
-            config.allowed_command_prefixes
-        },
-        ignored_paths: if config.ignored_paths.is_empty() {
-            default_config.ignored_paths
-        } else {
-            config.ignored_paths
-        },
-        accessible_paths: if config.accessible_paths.is_empty() {
-            default_config.accessible_paths
-        } else {
-            config.accessible_paths
-        },
-        // For boolean flags, we can just take the value from the deserialized
-        // config, as `serde(default)` will have already populated it from `Config::default()`
-        // if it was missing in the file.
-        terminal_bell: config.terminal_bell,
-    };
-
-    // If any values were missing, we can write the complete config back to the file
-    // This makes it easy for users to see all available options.
-    let final_toml_string = toml::to_string_pretty(&final_config)?;
-    if final_toml_string != config_string {
-        fs::write(&config_path, final_toml_string)?;
-    }
+    // Start with the on-disk config state and merge the final CLI layer.
+    let mut final_config = config_for_disk;
+    final_config.merge(cli_layer);
 
     Ok(final_config)
 }

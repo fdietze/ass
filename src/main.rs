@@ -101,7 +101,8 @@ fn get_user_retry(config: &Config) -> Result<UserRetryAction> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = cli::Cli::parse();
-    let config = config::load_or_create()?;
+    let config = config::load(&cli.overrides)?;
+
     let mut file_state_manager = FileStateManager::new();
 
     let system_prompt_content =

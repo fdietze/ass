@@ -1,3 +1,4 @@
+use crate::config::ConfigLayer;
 use clap::Parser;
 
 /// A simple command-line agent
@@ -6,4 +7,7 @@ use clap::Parser;
 pub struct Cli {
     /// The prompt for the agent
     pub prompt: String,
+
+    #[command(flatten)]
+    pub overrides: ConfigLayer,
 }
