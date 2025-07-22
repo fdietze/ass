@@ -22,14 +22,7 @@ pub fn read_file_tool_schema() -> Tool {
             name: "read_file".to_string(),
             description: Some(
                 "Reads one or more files into context. Can read full files or specific line ranges.
-Each file's output is separated. If more than one file is requested, the output for each file will be preceded by a header.
-Example Output Format for multiple files:
---- File: path/to/file1.txt ---
-File: path/to/file1.txt | Hash: a1b2c3d4 | Lines: 1-50/100
-1    LID1000: some content
-
---- File: path/to/file2.txt ---
-Error reading file \"path/to/file2.txt\": file not found
+Each file's output is separated. If more than one file is requested, the output for each file will be preceded by a header. If you are reading because of compiler or linter errors, only read specific ranges.
 IMPORTANT: The `edit_file` tool provides the new `lif_hash` after a successful edit. If you have this hash and the necessary LIDs, **don't read the file again**. Only use this tool for initial reads."
                     .to_string(),
             ),
