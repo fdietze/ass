@@ -74,7 +74,7 @@ impl FileState {
         let mut initial_state = Self {
             path,
             lines,
-            lif_hash: String::new(),
+            lif_hash: String::new(), // Placeholder
             ends_with_newline: content.ends_with('\n'),
         };
 
@@ -171,6 +171,17 @@ impl FileState {
         }
 
         self.lines = temp_lines;
+
+        // After modifying the lines, we need to update the `ends_with_newline` flag
+        // before we recalculate the hash.
+        if let Some(last_line) = self.lines.values().last() {
+            self.ends_with_newline = last_line.is_empty();
+        } else {
+            // If there are no lines, it's an empty file. An empty file is treated
+            // as not having a trailing newline for hashing purposes.
+            self.ends_with_newline = false;
+        }
+
         let new_lif_content = self.get_lif_content_for_hashing();
         self.lif_hash = Self::calculate_hash(&new_lif_content);
 
@@ -353,11 +364,16 @@ impl FileState {
     /// Generates the canonical string content that is used for hashing.
     /// It's crucial that this format is consistent.
     pub(crate) fn get_lif_content_for_hashing(&self) -> String {
-        self.lines
+        let mut content = self
+            .lines
             .iter()
             .map(|(index, content)| format!("{}: {}", index.to_string(), content))
             .collect::<Vec<String>>()
-            .join("\n")
+            .join("\n");
+        if self.ends_with_newline {
+            content.push('\n');
+        }
+        content
     }
 
     /// Parses a string like "LID1234" into its numeric form `1234`.

@@ -601,3 +601,34 @@ fn test_file_state_new_with_trailing_newline() {
     assert_eq!(state.get_full_content(), "line 1\n");
     assert!(state.ends_with_newline);
 }
+
+#[test]
+fn test_hash_uniqueness_for_trailing_newline() {
+    // This test proves the core of the hashing problem. Two file states that
+    // differ on disk (one has a trailing newline, one doesn't) should NEVER
+    // produce the same hash.
+
+    let (_tmp_dir, file_path) = setup_test_file("content");
+
+    // State 1: No trailing newline
+    let mut state1 = FileState::new(file_path.clone(), "line 1\nline 2");
+    state1.ends_with_newline = false;
+    let hash1 = FileState::calculate_hash(&state1.get_lif_content_for_hashing());
+
+    // State 2: Trailing newline
+    let mut state2 = FileState::new(file_path, "line 1\nline 2");
+    state2.ends_with_newline = true; // Manually set for the test
+    let hash2 = FileState::calculate_hash(&state2.get_lif_content_for_hashing());
+
+    // The lines collection is identical for both.
+    assert_eq!(state1.lines, state2.lines);
+    // But the newline flag is different.
+    assert_ne!(state1.ends_with_newline, state2.ends_with_newline);
+
+    // This assertion will FAIL until the hash calculation is fixed to include
+    // the `ends_with_newline` flag.
+    assert_ne!(
+        hash1, hash2,
+        "BUG: Hashes are identical for files that differ only by a trailing newline."
+    );
+}
