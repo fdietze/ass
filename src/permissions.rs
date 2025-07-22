@@ -21,15 +21,18 @@ pub fn is_path_accessible(path_to_check: &Path, accessible_paths: &[String]) -> 
     let path_to_canonicalize = if path_to_check.exists() {
         path_to_check.to_path_buf()
     } else {
-        path_to_check
-            .parent()
-            .ok_or_else(|| {
-                anyhow!(
-                    "Cannot check accessibility for '{}' because it has no parent directory.",
-                    path_to_check.display()
-                )
-            })?
-            .to_path_buf()
+        let parent = path_to_check.parent().ok_or_else(|| {
+            anyhow!(
+                "Cannot check accessibility for '{}' because it has no parent directory.",
+                path_to_check.display()
+            )
+        })?;
+        // If the parent is empty, it means the path is relative to the current directory.
+        if parent.as_os_str().is_empty() {
+            Path::new(".").to_path_buf()
+        } else {
+            parent.to_path_buf()
+        }
     };
 
     let canonical_path = match path_to_canonicalize.canonicalize() {
@@ -187,5 +190,31 @@ mod tests {
         assert!(is_path_accessible(&path_in_first, &accessible_paths).is_ok());
         assert!(is_path_accessible(&path_in_second, &accessible_paths).is_ok());
         assert!(is_path_accessible(&path_in_inaccessible, &accessible_paths).is_err());
+    }
+
+    #[test]
+    fn test_new_file_in_current_directory_relative_path() {
+        let (_tmp_dir, accessible, _inaccessible) = setup_test_dirs();
+
+        // Temporarily change the current directory to our accessible test directory
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&accessible).unwrap();
+
+        // Path is just a filename, implying the current working directory
+        let path_to_check = Path::new("new_file_in_cwd.txt");
+
+        // Accessible paths includes the current directory denoted by "."
+        let accessible_paths = vec![".".to_string()];
+
+        // The check should succeed because we are in an accessible directory.
+        let result = is_path_accessible(path_to_check, &accessible_paths);
+        assert!(
+            result.is_ok(),
+            "Failed with error: {:?}",
+            result.err().map(|e| e.to_string())
+        );
+
+        // Restore the original working directory
+        std::env::set_current_dir(original_cwd).unwrap();
     }
 }
