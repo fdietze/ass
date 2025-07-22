@@ -1,4 +1,4 @@
-use crate::{config::Config, file_editor::is_path_editable, path_expander};
+use crate::{config::Config, path_expander, permissions};
 use anyhow::{Result, anyhow};
 use console::style;
 use openrouter_api::models::tool::{FunctionDescription, Tool};
@@ -35,7 +35,7 @@ pub fn list_files_tool_schema() -> Tool {
 pub fn execute_list_files(args: &ListFilesArgs, config: &Config) -> Result<String> {
     let path_to_list = Path::new(&args.path);
 
-    is_path_editable(path_to_list, &config.editable_paths)?;
+    permissions::is_path_accessible(path_to_list, &config.accessible_paths)?;
 
     if !path_to_list.is_dir() {
         return Err(anyhow!(
@@ -82,7 +82,7 @@ mod tests {
         fs::write(root_path.join("ignored_dir/another.txt"), "ignored").unwrap();
 
         let config = Config {
-            editable_paths: vec![root_path.to_str().unwrap().to_string()],
+            accessible_paths: vec![root_path.to_str().unwrap().to_string()],
             ignored_paths: vec!["*.log".to_string(), "ignored_dir/".to_string()],
             ..Default::default()
         };
@@ -124,7 +124,7 @@ mod tests {
     #[test]
     fn test_disallowed_path() {
         let (tmp_dir, mut config) = setup_test_dir();
-        config.editable_paths = vec!["/some/other/safe/path".to_string()];
+        config.accessible_paths = vec!["/some/other/safe/path".to_string()];
 
         let args = ListFilesArgs {
             path: tmp_dir.path().to_str().unwrap().to_string(),
@@ -133,7 +133,7 @@ mod tests {
         let result = execute_list_files(&args, &config);
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("not within any of the allowed editable paths"));
+        assert!(error_msg.contains("is not allowed"));
     }
 
     #[test]

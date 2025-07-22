@@ -2,8 +2,8 @@
 //!
 //! This module provides the `create_file` tool, allowing the agent to create new files.
 
-use crate::file_editor::is_creation_path_safe;
 use crate::file_state_manager::FileStateManager;
+use crate::permissions;
 use anyhow::{Result, anyhow};
 use openrouter_api::models::tool::{FunctionDescription, Tool};
 use serde::Deserialize;
@@ -72,7 +72,7 @@ If the file content comes from another file, instead of creating a file with the
 pub fn execute_create_files(
     args: &CreateFileArgs,
     file_state_manager: &mut FileStateManager,
-    editable_paths: &[String],
+    accessible_paths: &[String],
 ) -> Result<String> {
     if args.files.is_empty() {
         return Ok("No files were specified for creation.".to_string());
@@ -90,7 +90,7 @@ pub fn execute_create_files(
                 ));
             }
 
-            is_creation_path_safe(path_to_create, editable_paths)?;
+            permissions::is_path_accessible(path_to_create, accessible_paths)?;
 
             if let Some(parent) = path_to_create.parent() {
                 fs::create_dir_all(parent)?;
@@ -131,7 +131,7 @@ mod tests {
         let file_path = tmp_dir.path().join("new_file.txt");
         let file_path_str = file_path.to_str().unwrap().to_string();
         let mut manager = FileStateManager::new();
-        let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
+        let accessible_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
 
         let args = CreateFileArgs {
             files: vec![CreateFileSpec {
@@ -140,7 +140,7 @@ mod tests {
             }],
         };
 
-        let result = execute_create_files(&args, &mut manager, &editable_paths).unwrap();
+        let result = execute_create_files(&args, &mut manager, &accessible_paths).unwrap();
 
         assert!(result.contains(&format!("File: {file_path_str}")));
         assert!(result.contains("LID1000: hello"));
@@ -155,7 +155,7 @@ mod tests {
     fn test_execute_create_file_already_exists() {
         let (_tmp_dir, file_path) = setup_test_file("existing content");
         let mut manager = FileStateManager::new();
-        let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
         let args = CreateFileArgs {
             files: vec![CreateFileSpec {
@@ -164,7 +164,7 @@ mod tests {
             }],
         };
 
-        let result = execute_create_files(&args, &mut manager, &editable_paths).unwrap();
+        let result = execute_create_files(&args, &mut manager, &accessible_paths).unwrap();
         assert!(result.contains("Error: File"));
         assert!(result.contains("already exists"));
     }
@@ -174,7 +174,7 @@ mod tests {
         let tmp_dir = Builder::new().prefix("test-creator-").tempdir().unwrap();
         let file_path = tmp_dir.path().join("new_file.txt");
         let mut manager = FileStateManager::new();
-        let editable_paths = vec!["/some/other/dir".to_string()]; // Disallowed
+        let accessible_paths = vec!["/some/other/dir".to_string()]; // Disallowed
 
         let args = CreateFileArgs {
             files: vec![CreateFileSpec {
@@ -183,8 +183,8 @@ mod tests {
             }],
         };
 
-        let result = execute_create_files(&args, &mut manager, &editable_paths).unwrap();
-        assert!(result.contains("is not within any of the allowed editable paths"));
+        let result = execute_create_files(&args, &mut manager, &accessible_paths).unwrap();
+        assert!(result.contains("is not allowed"));
     }
 
     #[test]
@@ -193,7 +193,7 @@ mod tests {
         let file_path1 = tmp_dir.path().join("new_file1.txt");
         let file_path2 = tmp_dir.path().join("new_file2.txt");
         let mut manager = FileStateManager::new();
-        let editable_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
+        let accessible_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
 
         let args = CreateFileArgs {
             files: vec![
@@ -208,7 +208,7 @@ mod tests {
             ],
         };
 
-        let result = execute_create_files(&args, &mut manager, &editable_paths).unwrap();
+        let result = execute_create_files(&args, &mut manager, &accessible_paths).unwrap();
 
         // Check result string
         assert!(result.contains(&format!("File: {}", file_path1.to_str().unwrap())));

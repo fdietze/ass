@@ -1,4 +1,4 @@
-use crate::{config::Config, file_editor::is_path_editable, file_state_manager::FileStateManager};
+use crate::{config::Config, file_state_manager::FileStateManager, permissions};
 use anyhow::Result;
 use openrouter_api::models::tool::{FunctionDescription, Tool};
 use serde::Deserialize;
@@ -71,7 +71,7 @@ pub fn execute_read_file(
 
         let file_content_result: Result<String> = (|| {
             let path_to_read = Path::new(file_path_str);
-            is_path_editable(path_to_read, &config.editable_paths)?;
+            permissions::is_path_accessible(path_to_read, &config.accessible_paths)?;
             // Always force a reload from disk to ensure the content is fresh
             let file_state = file_state_manager.force_reload_file(file_path_str)?;
             Ok(file_state.get_lif_string_for_range(request.start_line, request.end_line))
@@ -111,7 +111,7 @@ mod tests {
     fn test_read_always_reloads_from_disk() {
         let (_tmp_dir, file_path) = setup_test_file("initial content");
         let config = Config {
-            editable_paths: vec![_tmp_dir.path().to_str().unwrap().to_string()],
+            accessible_paths: vec![_tmp_dir.path().to_str().unwrap().to_string()],
             ..Default::default()
         };
         let args = FileReadArgs {
@@ -145,7 +145,7 @@ mod tests {
     fn test_read_full_file() {
         let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2\nline 3");
         let config = Config {
-            editable_paths: vec![_tmp_dir.path().to_str().unwrap().to_string()],
+            accessible_paths: vec![_tmp_dir.path().to_str().unwrap().to_string()],
             ..Default::default()
         };
         let args = FileReadArgs {
@@ -173,7 +173,7 @@ mod tests {
     fn test_read_line_range() {
         let (_tmp_dir, file_path) = setup_test_file("1\n2\n3\n4\n5");
         let config = Config {
-            editable_paths: vec![_tmp_dir.path().to_str().unwrap().to_string()],
+            accessible_paths: vec![_tmp_dir.path().to_str().unwrap().to_string()],
             ..Default::default()
         };
         let args = FileReadArgs {
@@ -201,7 +201,7 @@ mod tests {
         std::fs::write(&file_path2, "file2 content").unwrap();
 
         let config = Config {
-            editable_paths: vec![_tmp_dir.path().to_str().unwrap().to_string()],
+            accessible_paths: vec![_tmp_dir.path().to_str().unwrap().to_string()],
             ..Default::default()
         };
         let args = FileReadArgs {
@@ -234,7 +234,7 @@ mod tests {
         let non_existent_path = "non_existent_file.txt";
 
         let config = Config {
-            editable_paths: vec![_tmp_dir.path().to_str().unwrap().to_string()],
+            accessible_paths: vec![_tmp_dir.path().to_str().unwrap().to_string()],
             ..Default::default()
         };
         let args = FileReadArgs {
@@ -265,7 +265,7 @@ mod tests {
     fn test_empty_file() {
         let (_tmp_dir, file_path_str) = setup_test_file("");
         let config = Config {
-            editable_paths: vec![_tmp_dir.path().to_str().unwrap().to_string()],
+            accessible_paths: vec![_tmp_dir.path().to_str().unwrap().to_string()],
             ..Default::default()
         };
         let args = FileReadArgs {

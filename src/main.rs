@@ -26,6 +26,7 @@ mod file_state_tests;
 mod list_files;
 mod patch;
 mod path_expander;
+mod permissions;
 mod prompt_builder;
 mod shell;
 mod streaming_executor;

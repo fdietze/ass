@@ -16,7 +16,7 @@ pub struct Config {
     pub max_read_lines: u64,
     pub allowed_command_prefixes: Vec<String>,
     pub ignored_paths: Vec<String>,
-    pub editable_paths: Vec<String>,
+    pub accessible_paths: Vec<String>,
     pub terminal_bell: bool,
 }
 
@@ -35,7 +35,7 @@ impl Default for Config {
                 "pwd".to_string(),
             ],
             ignored_paths: vec![".git".to_string()],
-            editable_paths: vec![".".to_string()],
+            accessible_paths: vec![".".to_string()],
             terminal_bell: true,
         }
     }
@@ -99,10 +99,10 @@ pub fn load_or_create() -> Result<Config> {
         } else {
             config.ignored_paths
         },
-        editable_paths: if config.editable_paths.is_empty() {
-            default_config.editable_paths
+        accessible_paths: if config.accessible_paths.is_empty() {
+            default_config.accessible_paths
         } else {
-            config.editable_paths
+            config.accessible_paths
         },
         // For boolean flags, we can just take the value from the deserialized
         // config, as `serde(default)` will have already populated it from `Config::default()`

@@ -52,7 +52,7 @@ pub fn handle_tool_call(
             let result =
                 match serde_json::from_str::<CreateFileArgs>(&tool_call.function_call.arguments) {
                     Ok(args) => {
-                        execute_create_files(&args, file_state_manager, &config.editable_paths)
+                        execute_create_files(&args, file_state_manager, &config.accessible_paths)
                     }
                     Err(e) => Err(anyhow::anyhow!(
                         "Error: Invalid arguments provided for {function_name}: {e}"
@@ -81,7 +81,7 @@ pub fn handle_tool_call(
                 match serde_json::from_str::<FileOperationArgs>(&tool_call.function_call.arguments)
                 {
                     Ok(args) => {
-                        execute_file_operations(&args, file_state_manager, &config.editable_paths)
+                        execute_file_operations(&args, file_state_manager, &config.accessible_paths)
                     }
                     Err(e) => Err(anyhow::anyhow!(
                         "Error: Invalid arguments provided for {function_name}: {e}"

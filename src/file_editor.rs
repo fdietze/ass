@@ -22,6 +22,7 @@
 use crate::file_state::FileState;
 use crate::file_state_manager::FileStateManager;
 use crate::patch::{PatchOperation, ReplaceOperation};
+use crate::permissions;
 use anyhow::{Result, anyhow};
 use openrouter_api::models::tool::{FunctionDescription, Tool};
 use serde::{Deserialize, Deserializer};
@@ -239,74 +240,6 @@ pub fn edit_file_tool_schema() -> Tool {
     }
 }
 
-/// Checks if a given file path is within the allowed editable directories.
-/// This is a security measure to prevent the agent from editing unintended files.
-pub fn is_path_editable(path_to_edit: &Path, editable_paths: &[String]) -> Result<()> {
-    let canonical_path_to_edit = path_to_edit.canonicalize()?;
-
-    let is_allowed = editable_paths.iter().any(|p| {
-        if let Ok(canonical_editable_path) = Path::new(p).canonicalize() {
-            canonical_path_to_edit.starts_with(canonical_editable_path)
-        } else {
-            false
-        }
-    });
-
-    if !is_allowed {
-        return Err(anyhow!(
-            "Error: File '{}' is not within any of the allowed editable paths: {:?}.",
-            path_to_edit.display(),
-            editable_paths
-        ));
-    }
-
-    Ok(())
-}
-
-/// Checks if creating a file at the given path is allowed.
-/// It inspects the parent directory of the path to ensure it's within the editable scope.
-pub fn is_creation_path_safe(path_to_create: &Path, editable_paths: &[String]) -> Result<()> {
-    let parent_dir = path_to_create.parent().ok_or_else(|| {
-        anyhow!(
-            "Cannot create file '{}' because it has no parent directory.",
-            path_to_create.display()
-        )
-    })?;
-
-    // If the parent is empty, it means the path is relative to the current dir.
-    let dir_to_check = if parent_dir.as_os_str().is_empty() {
-        Path::new(".")
-    } else {
-        parent_dir
-    };
-
-    let canonical_parent_dir = dir_to_check.canonicalize().map_err(|e| {
-        anyhow!(
-            "Cannot resolve parent directory '{}': {}. It might not exist.",
-            dir_to_check.display(),
-            e
-        )
-    })?;
-
-    let is_allowed = editable_paths.iter().any(|p| {
-        if let Ok(canonical_editable_path) = Path::new(p).canonicalize() {
-            canonical_parent_dir.starts_with(canonical_editable_path)
-        } else {
-            false
-        }
-    });
-
-    if !is_allowed {
-        return Err(anyhow!(
-            "Error: Cannot create file '{}' because its directory is not within any of the allowed editable paths: {:?}.",
-            path_to_create.display(),
-            editable_paths
-        ));
-    }
-
-    Ok(())
-}
-
 /// Strips the `LID...: ` prefix from a line, if present.
 /// This makes the context check more robust, as the LLM often includes the LID
 /// in the context string.
@@ -467,7 +400,7 @@ pub(crate) fn verify_patch_context(
 pub fn execute_file_operations(
     args: &FileOperationArgs,
     file_state_manager: &mut FileStateManager,
-    editable_paths: &[String],
+    accessible_paths: &[String],
 ) -> Result<String> {
     let mut results = Vec::new();
 
@@ -518,8 +451,11 @@ pub fn execute_file_operations(
         // --- Plan Copies ---
         for (i, copy) in args.copies.iter().enumerate() {
             let mut plan_copy = || {
-                is_path_editable(Path::new(&copy.source_file_path), editable_paths)?;
-                is_path_editable(Path::new(&copy.dest_file_path), editable_paths)?;
+                permissions::is_path_accessible(
+                    Path::new(&copy.source_file_path),
+                    accessible_paths,
+                )?;
+                permissions::is_path_accessible(Path::new(&copy.dest_file_path), accessible_paths)?;
 
                 let source_state = file_state_manager.open_file(&copy.source_file_path)?;
                 if source_state.get_short_hash() != copy.source_lif_hash {
@@ -555,8 +491,11 @@ pub fn execute_file_operations(
         // --- Plan Moves ---
         for (i, mov) in args.moves.iter().enumerate() {
             let mut plan_move = || {
-                is_path_editable(Path::new(&mov.source_file_path), editable_paths)?;
-                is_path_editable(Path::new(&mov.dest_file_path), editable_paths)?;
+                permissions::is_path_accessible(
+                    Path::new(&mov.source_file_path),
+                    accessible_paths,
+                )?;
+                permissions::is_path_accessible(Path::new(&mov.dest_file_path), accessible_paths)?;
 
                 let source_state = file_state_manager.open_file(&mov.source_file_path)?;
                 if source_state.get_short_hash() != mov.source_lif_hash {
@@ -607,7 +546,7 @@ pub fn execute_file_operations(
         for edit in &args.edits {
             let file_path_str = &edit.file_path;
             let mut plan_edit = || -> Result<()> {
-                is_path_editable(Path::new(file_path_str), editable_paths)?;
+                permissions::is_path_accessible(Path::new(file_path_str), accessible_paths)?;
 
                 // For edits, we can do a preliminary hash check during planning
                 // because all ops in a single `PatchArgs` use the same hash.

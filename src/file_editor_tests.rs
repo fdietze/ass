@@ -17,7 +17,7 @@ mod tests {
     fn test_execute_single_patch_successfully() {
         let (_tmp_dir, file_path) = setup_test_file("line 1\nline 3");
         let mut manager = FileStateManager::new();
-        let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
         let initial_state = manager.open_file(&file_path).unwrap();
         let initial_short_hash = initial_state.get_short_hash().to_string();
@@ -37,7 +37,7 @@ mod tests {
             moves: vec![],
         };
 
-        let result = execute_file_operations(&args, &mut manager, &editable_paths);
+        let result = execute_file_operations(&args, &mut manager, &accessible_paths);
         assert!(result.is_ok());
 
         let output = result.unwrap();
@@ -57,7 +57,7 @@ mod tests {
     fn test_execute_patch_hash_mismatch() {
         let (_tmp_dir, file_path) = setup_test_file("line 1");
         let mut manager = FileStateManager::new();
-        let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
         let args = FileOperationArgs {
             edits: vec![PatchArgs {
@@ -69,7 +69,7 @@ mod tests {
             moves: vec![],
         };
 
-        let result = execute_file_operations(&args, &mut manager, &editable_paths);
+        let result = execute_file_operations(&args, &mut manager, &accessible_paths);
         assert!(result.is_ok()); // The function itself doesn't error, it reports errors in the string
         let output = result.unwrap();
         assert!(output.contains("Error: Hash mismatch"));
@@ -85,7 +85,7 @@ mod tests {
         let file2_path_str = file2_path.to_str().unwrap().to_string();
 
         let mut manager = FileStateManager::new();
-        let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
         let file1_initial_state = manager.open_file(&file1_path).unwrap();
         let file1_initial_hash = file1_initial_state.get_short_hash().to_string();
@@ -119,7 +119,7 @@ mod tests {
         };
 
         // --- Act ---
-        let result = execute_file_operations(&args, &mut manager, &editable_paths).unwrap();
+        let result = execute_file_operations(&args, &mut manager, &accessible_paths).unwrap();
 
         // --- Assert ---
         // Check final string report
@@ -148,7 +148,7 @@ mod tests {
     fn test_execute_patch_with_wrong_context() {
         let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2\nline 3");
         let mut manager = FileStateManager::new();
-        let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
         let initial_state = manager.open_file(&file_path).unwrap();
         let initial_short_hash = initial_state.get_short_hash().to_string();
@@ -168,7 +168,7 @@ mod tests {
             moves: vec![],
         };
 
-        let result = execute_file_operations(&args, &mut manager, &editable_paths).unwrap();
+        let result = execute_file_operations(&args, &mut manager, &accessible_paths).unwrap();
         assert!(result.contains("Error: ContextBefore mismatch"));
 
         // Ensure file was not changed
@@ -180,7 +180,7 @@ mod tests {
     fn test_execute_patch_with_lid_in_context() {
         let (_tmp_dir, file_path) = setup_test_file("line 1\nline 3");
         let mut manager = FileStateManager::new();
-        let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
         let initial_state = manager.open_file(&file_path).unwrap();
         let initial_short_hash = initial_state.get_short_hash().to_string();
@@ -201,7 +201,7 @@ mod tests {
             moves: vec![],
         };
 
-        let result = execute_file_operations(&args, &mut manager, &editable_paths);
+        let result = execute_file_operations(&args, &mut manager, &accessible_paths);
         assert!(result.is_ok(), "Operation should succeed");
 
         let output = result.unwrap();
@@ -220,7 +220,7 @@ mod tests {
         // Setup a file with extra whitespace
         let (_tmp_dir, file_path) = setup_test_file("line 1\n\n  line 3  ");
         let mut manager = FileStateManager::new();
-        let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
         let initial_state = manager.open_file(&file_path).unwrap();
         let initial_short_hash = initial_state.get_short_hash().to_string();
@@ -242,7 +242,7 @@ mod tests {
             moves: vec![],
         };
 
-        let result = execute_file_operations(&args, &mut manager, &editable_paths);
+        let result = execute_file_operations(&args, &mut manager, &accessible_paths);
         assert!(result.is_ok(), "Operation should succeed");
 
         let output = result.unwrap();
@@ -259,7 +259,7 @@ mod tests {
     fn test_copy_intra_file() {
         let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2\nline 3");
         let mut manager = FileStateManager::new();
-        let editable_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
         let initial_state = manager.open_file(&file_path).unwrap();
         let initial_hash = initial_state.get_short_hash().to_string();
@@ -278,7 +278,7 @@ mod tests {
             moves: vec![],
         };
 
-        let result = execute_file_operations(&args, &mut manager, &editable_paths).unwrap();
+        let result = execute_file_operations(&args, &mut manager, &accessible_paths).unwrap();
         assert!(!result.contains("Error:"), "Operation should succeed");
 
         let content = fs::read_to_string(&file_path).unwrap();
@@ -290,7 +290,7 @@ mod tests {
         let (_tmp_dir, source_path) = setup_test_file("... irrelevant ...\nfn my_func() {}\n...");
         let (_tmp_dir2, dest_path) = setup_test_file("mod helper;");
         let mut manager = FileStateManager::new();
-        let editable_paths = vec![
+        let accessible_paths = vec![
             _tmp_dir.path().to_str().unwrap().to_string(),
             _tmp_dir2.path().to_str().unwrap().to_string(),
         ];
@@ -330,7 +330,7 @@ mod tests {
             copies: vec![],
         };
 
-        let result = execute_file_operations(&args, &mut manager, &editable_paths).unwrap();
+        let result = execute_file_operations(&args, &mut manager, &accessible_paths).unwrap();
         assert!(
             !result.contains("Error:"),
             "Operation should succeed, but got {result}"
