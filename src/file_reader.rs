@@ -24,8 +24,24 @@ pub fn read_file_tool_schema() -> Tool {
             description: Some(
                 "Reads one or more files into context. Can read full files or specific line ranges.
 You can request multiple, non-contiguous ranges from a single file in one go.
-Each file's output is separated. If more than one file is requested, the output for each file will be preceded by a header. If you are reading because of compiler or linter errors, only read specific ranges.
-IMPORTANT: The `edit_file` tool provides the new hash after a successful edit. If you have this hash and the necessary line indexes, **don't read the file again**. Only use this tool for initial reads."
+If you are reading because of compiler or linter errors, only read specific ranges.
+Each file's output is separated. If more than one file is requested, the output for each file will be preceded by a header.
+
+**Output Format**:
+Each line is prefixed with its line number and a unique Line Identifier (LID). The LID is crucial for any subsequent edits.
+
+Example `read_file` output for `jokes.txt`:
+```
+File: jokes.txt | Hash: 931d3b24 | Lines: 1-1/1
+1    80: Why do programmers prefer dark mode? Because light attracts bugs.
+```
+
+**How to Use the Output**:
+- The first number (`1`) is the line number, for display only.
+- The second value (`80`) is the Line Identifier (LID).
+- When using `edit_file`, you MUST provide the LID (e.g., `80`), not the line number (`1`).
+
+**IMPORTANT**: The `edit_file` tool provides the new hash after a successful edit. If you have this hash and the necessary line indexes, **don't read the file again**. Only use this tool for initial reads."
                     .to_string(),
             ),
             parameters: serde_json::json!({

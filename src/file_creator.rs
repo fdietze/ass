@@ -36,6 +36,20 @@ pub fn create_file_tool_schema() -> Tool {
                 "Creates one or more new files with specified content.
 This operation is atomic: if any file creation fails, no files from the batch are created.
 Returns the representation (content with line indexes and a hash) for each successfully created file. This information is required for any subsequent edits to the new files within the same session.
+
+**Output Format**:
+The output for each created file has the same format as the `read_file` tool, including a unique Line Identifier (LID) for each line.
+
+Example `create_file` output for a new file `new.txt`:
+```
+File: new.txt | Hash: a1b2c3d4 | Lines: 1-2/2
+1    80: first line
+2    c0: second line
+```
+
+**How to Use the Output**:
+When you want to edit this new file later, you must use the LIDs (`80`, `c0`) and the hash (`a1b2c3d4`) in your `edit_file` call.
+
 If the file content comes from another file, instead of creating a file with the content, create an empty file and then use the move operation to move specific lines from the source file to the new file.
 "
                     .to_string(),

@@ -123,19 +123,33 @@ pub fn edit_file_tool_schema() -> Tool {
 **Strategy for Complex Operations**:
 - **Moving Multiple Blocks**: To move separate blocks, provide a separate `moves` object for each. To place them together, use the **exact same `dest_after_lid`** for each `moves` object.
 - **Think in Hunks**: For `edits`, prefer replacing a whole logical block (like a function) instead of many small edits.
-- **Parantheses**: Pay special attention to parantheses. Will they be still balanced after the edit?
+- **Parentheses**: Pay special attention to parentheses. Will they be still balanced after the edit?
 
 **Patch Details for `edits`**:
-- **Replace/Delete**: `{"op":"r", "start_lid":"index1", "end_lid":"index5", "content":["new"]}`. To delete, provide an empty `content` array.
-- **Insert**: `{"op":"i", "after_lid":"index10", "content":["new"]}`. Use `_START_OF_FILE_` for `after_lid` to insert at the beginning.
+- **LIDs vs Line Numbers**: The `read_file` tool's output shows both a line number and a Line Identifier (LID). You MUST use the LID for all `*_lid` fields (e.g., `start_lid`, `after_lid`). The LID is the fractional index (like `80`, `c0`, etc.), NOT the sequential line number (like `1`, `2`, `3`).
+- **Replace/Delete**: `{"op":"r", "start_lid":"a4", "end_lid":"b8", "content":["new"]}`. To delete, provide an empty `content` array.
+- **Insert**: `{"op":"i", "after_lid":"c2", "content":["new"]}`. Use `_START_OF_FILE_` for `after_lid` to insert at the beginning.
 - **Context for Safety**: The optional `context_before` and `context_after` fields are highly recommended to prevent errors if the file has changed unexpectedly.
 
 **Rules**:
-- Line identifiers (indexes) MUST be the strings from when the file was read.
+- Line identifiers (LIDs) MUST be the fractional index strings from when the file was read.
 - The `lif_hash` for any operation MUST match the hash from when the file was last read or edited.
 
 **Example**:
-`{"moves":[{"source_file_path":"a.rs","source_lif_hash":"h1","source_start_lid":"index20","source_end_lid":"index25","dest_file_path":"b.rs","dest_lif_hash":"h2","dest_after_lid":"index10"}],"edits":[{"file_path":"a.rs","lif_hash":"h1","patch":[{"op":"r","start_lid":"index2","end_lid":"index2","context_before":"// File a","content":["use b;"],"context_after":"fn main() {}"}]}]}`
+Suppose `read_file` returns:
+```
+File: a.rs | Hash: h1 | Lines: 1-3/3
+1    20: // File a
+2    40: fn main() {}
+3    60: // end
+```
+And `read_file` on `b.rs` returns:
+```
+File: b.rs | Hash: h2 | Lines: 1-1/1
+1    10: // File b
+```
+To move `fn main() {}` from `a.rs` to `b.rs` and add `use b;` to `a.rs`, you would call `edit_file` like this:
+`{"moves":[{"source_file_path":"a.rs","source_lif_hash":"h1","source_start_lid":"40","source_end_lid":"40","dest_file_path":"b.rs","dest_lif_hash":"h2","dest_after_lid":"10"}],"edits":[{"file_path":"a.rs","lif_hash":"h1","patch":[{"op":"i","after_lid":"20","content":["use b;"]}]}]}`
 "#
                     .to_string(),
             ),
@@ -167,9 +181,9 @@ pub fn edit_file_tool_schema() -> Tool {
                                                 "description": "Replace a range of lines, like a 'diff hunk'. This is best for updating a whole function body or other logical block.",
                                                 "properties": {
                                                     "op": {"const": "r"},
-                                                    "start_lid": {"type": "string", "description": "The starting line identifier."},
-                                                    "end_lid": {"type": "string", "description": "The ending line identifier. For a single line, start_lid and end_lid are the same."},
-                                                    "content": {"type": "array", "items": {"type": "string"}, "description": "The new lines of content to replace the specified range."},
+                                                    "start_lid": {"type": "string", "description": "The starting line identifier (LID), which is a fractional index string like '8a' or 'c4'."},
+                                                    "end_lid": {"type": "string", "description": "The ending line identifier (LID). For a single line, start_lid and end_lid are the same."},
+                                                    "content": {"type": "array", "items": {"type": "string"}, "description": "The new lines of content to replace the specified range. An empty array deletes the lines."},
                                                     "context_before": {"type": "string", "description": "The exact content of the line immediately before start_lid. Highly recommended for safety."},
                                                     "context_after": {"type": "string", "description": "The exact content of the line immediately after end_lid. Highly recommended for safety."}
                                                 },
@@ -179,7 +193,7 @@ pub fn edit_file_tool_schema() -> Tool {
                                                 "description": "Insert a new block of lines after a specific line. Use `_START_OF_FILE_` as the `after_lid` to insert at the top of the file.",
                                                 "properties": {
                                                     "op": {"const": "i"},
-                                                    "after_lid": {"type": "string", "description": "The line identifier after which to insert. Use '_START_OF_FILE'."},
+                                                    "after_lid": {"type": "string", "description": "The line identifier (LID) after which to insert. Use '_START_OF_FILE' to insert at the beginning."},
                                                     "content": {"type": "array", "items": {"type": "string"}, "description": "The new lines of content to insert."},
                                                     "context_before": {"type": "string", "description": "The exact content of the `after_lid` line. Highly recommended for safety."},
                                                     "context_after": {"type": "string", "description": "The exact content of the line immediately after `after_lid`. Highly recommended for safety."}
@@ -201,11 +215,11 @@ pub fn edit_file_tool_schema() -> Tool {
                             "properties": {
                                 "source_file_path": { "type": "string", "description": "The path of the file to copy lines from." },
                                 "source_lif_hash": { "type": "string", "description": "The lif_hash of the source file." },
-                                "source_start_lid": { "type": "string", "description": "The starting line identifier of the range to copy." },
-                                "source_end_lid": { "type": "string", "description": "The ending line identifier of the range to copy." },
+                                "source_start_lid": { "type": "string", "description": "The starting line identifier (LID) of the range to copy." },
+                                "source_end_lid": { "type": "string", "description": "The ending line identifier (LID) of the range to copy." },
                                 "dest_file_path": { "type": "string", "description": "The path of the file to copy lines to." },
                                 "dest_lif_hash": { "type": "string", "description": "The lif_hash of the destination file." },
-                                "dest_after_lid": { "type": "string", "description": "The line identifier in the destination file after which to insert. Use `_START_OF_FILE_` for the beginning." }
+                                "dest_after_lid": { "type": "string", "description": "The line identifier (LID) in the destination file after which to insert. Use `_START_OF_FILE_` for the beginning." }
                             },
                             "required": ["source_file_path", "source_lif_hash", "source_start_lid", "source_end_lid", "dest_file_path", "dest_lif_hash", "dest_after_lid"]
                         }
@@ -218,11 +232,11 @@ pub fn edit_file_tool_schema() -> Tool {
                             "properties": {
                                 "source_file_path": { "type": "string", "description": "The path of the file to move lines from." },
                                 "source_lif_hash": { "type": "string", "description": "The lif_hash of the source file." },
-                                "source_start_lid": { "type": "string", "description": "The starting line identifier of the range to move." },
-                                "source_end_lid": { "type": "string", "description": "The ending line identifier of the range to move." },
+                                "source_start_lid": { "type": "string", "description": "The starting line identifier (LID) of the range to move." },
+                                "source_end_lid": { "type": "string", "description": "The ending line identifier (LID) of the range to move." },
                                 "dest_file_path": { "type": "string", "description": "The path of the file to move lines to." },
                                 "dest_lif_hash": { "type": "string", "description": "The lif_hash of the destination file." },
-                                "dest_after_lid": { "type": "string", "description": "The line identifier in the destination file after which to insert. Use `_START_OF_FILE_` for the beginning." }
+                                "dest_after_lid": { "type": "string", "description": "The line identifier (LID) in the destination file after which to insert. Use `_START_OF_FILE_` for the beginning." }
                             },
                             "required": ["source_file_path", "source_lif_hash", "source_start_lid", "source_end_lid", "dest_file_path", "dest_lif_hash", "dest_after_lid"]
                         }
