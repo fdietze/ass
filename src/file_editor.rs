@@ -122,7 +122,7 @@ pub fn edit_file_tool_schema() -> Tool {
 
 **IMPORTANT Execution Model**: All operations in a single call are **planned** based on the *initial state* of the files. The tool gathers all requested changes and applies them on a per-file basis. This means all LIDs (`source_start_lid`, `dest_after_lid`, etc.) and `lif_hash` values you provide MUST be valid in the files as they were *before* this tool call began.
 
-**Prefer Moves Over Edits**: This is a critical strategy. Use the `moves` operation instead of `edits` whenever you are moving existing code. This avoids LLM spelling mistakes, saves tokens, and is more robust.
+**Prefer Moves Over Edits**: This is IMPORTANT: Always use the `moves` operation instead of `edits` where possible. For example: moving or extracting code. This avoids LLM spelling mistakes, saves tokens, and is more robust.
 
 **Execution Order**: Operations are planned in this fixed order: 1. `copies`, 2. `moves`, 3. `edits`.
 
