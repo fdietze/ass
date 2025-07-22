@@ -60,6 +60,8 @@ pub struct FileState {
     /// The current SHA-1 hash of the LIF content, used for state synchronization.
     /// This hash acts as a version identifier for the file's state.
     pub lif_hash: String,
+    /// Whether the original file content ended with a newline.
+    pub(crate) ends_with_newline: bool,
 }
 
 /// Generates a colorized, human-readable diff between the old and new file states.
@@ -68,19 +70,18 @@ impl FileState {
     /// This function generates the initial LIDs and computes the first hash.
     pub fn new(path: PathBuf, content: &str) -> Self {
         let mut lines = BTreeMap::new();
-        // Use split to correctly handle trailing newlines, but handle the empty
-        // string case explicitly, as "".split() produces one empty string element.
-        if !content.is_empty() {
-            for (i, line_content) in content.split('\n').enumerate() {
-                let lid = (i as u64 + 1) * STARTING_LID_GAP;
-                lines.insert(lid, line_content.to_string());
-            }
+        // Use `lines()` to correctly handle different line endings and avoid
+        // issues with trailing newlines.
+        for (i, line_content) in content.lines().enumerate() {
+            let lid = (i as u64 + 1) * STARTING_LID_GAP;
+            lines.insert(lid, line_content.to_string());
         }
 
         let mut initial_state = Self {
             path,
             lines,
             lif_hash: String::new(),
+            ends_with_newline: content.ends_with('\n'),
         };
 
         let lif_content = initial_state.get_lif_content_for_hashing();
@@ -181,11 +182,18 @@ impl FileState {
     /// Reconstructs the full file content by joining the lines, without any LIF metadata.
     /// This is used to write the final content back to disk.
     pub fn get_full_content(&self) -> String {
-        self.lines
+        let mut content = self
+            .lines
             .values()
             .cloned()
             .collect::<Vec<String>>()
-            .join("\n")
+            .join("\n");
+
+        if self.ends_with_newline && !self.lines.is_empty() {
+            content.push('\n');
+        }
+
+        content
     }
 
     /// Generates the complete LIF representation of the file to be sent to the LLM.

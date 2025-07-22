@@ -523,11 +523,11 @@ fn test_file_state_new_with_single_newline() {
     let (_tmp_dir, file_path) = setup_test_file(content);
     let state = FileState::new(file_path, content);
 
-    // A single newline creates two lines: one before, one after.
-    assert_eq!(state.lines.len(), 2);
+    // A single newline is one empty line.
+    assert_eq!(state.lines.len(), 1);
     assert_eq!(state.lines.get(&1000), Some(&"".to_string()));
-    assert_eq!(state.lines.get(&2000), Some(&"".to_string()));
     assert_eq!(state.get_full_content(), "\n");
+    assert!(state.ends_with_newline);
 }
 
 #[test]
@@ -536,8 +536,8 @@ fn test_file_state_new_with_trailing_newline() {
     let (_tmp_dir, file_path) = setup_test_file(content);
     let state = FileState::new(file_path, content);
 
-    assert_eq!(state.lines.len(), 2);
+    assert_eq!(state.lines.len(), 1);
     assert_eq!(state.lines.get(&1000), Some(&"line 1".to_string()));
-    assert_eq!(state.lines.get(&2000), Some(&"".to_string()));
     assert_eq!(state.get_full_content(), "line 1\n");
+    assert!(state.ends_with_newline);
 }
