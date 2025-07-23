@@ -129,7 +129,7 @@ pub fn edit_file_tool_schema() -> Tool {
 - **LIDs vs Line Numbers**: The `read_file` tool's output shows both a line number and a Line Identifier (LID). You MUST use the LID for all `*_lid` fields (e.g., `start_lid`, `after_lid`). The LID is the fractional index (like `80`, `c0`, etc.), NOT the sequential line number (like `1`, `2`, `3`).
 - **Replace/Delete**: `{"op":"r", "start_lid":"a4", "end_lid":"b8", "content":["new"]}`. To delete, provide an empty `content` array.
 - **Insert**: `{"op":"i", "after_lid":"c2", "content":["new"]}`. Use `_START_OF_FILE_` for `after_lid` to insert at the beginning.
-- **Context for Safety**: The optional `context_before` and `context_after` fields are highly recommended to prevent errors if the file has changed unexpectedly.
+- **Context for Safety**: Always provide `context_before` and `context_after` fields to prevent line-range errors.
 
 **Rules**:
 - Line identifiers (LIDs) MUST be the fractional index strings from when the file was read.
