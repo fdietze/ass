@@ -248,19 +248,6 @@ To move `fn main() {}` from `a.rs` to `b.rs` and add `use b;` to `a.rs`, you wou
     }
 }
 
-/// Strips the `...: ` prefix from a line, if present.
-/// This makes the context check more robust, as the LLM often includes the LID
-/// in the context string.
-pub(crate) fn strip_prefix(line: &str) -> &str {
-    if let Some(colon_pos) = line.find(':') {
-        // Assume that if a colon is present, the part before it is a line identifier
-        // that the LLM included, and we should ignore it for the context check.
-        let after_colon = &line[colon_pos + 1..];
-        return after_colon.trim_start();
-    }
-    line
-}
-
 /// Normalizes a string by collapsing and removing all whitespace.
 pub(crate) fn normalize_whitespace(s: &str) -> String {
     s.split_whitespace().collect()
@@ -275,7 +262,7 @@ pub(crate) fn verify_patch_context(
         PatchOperation::Insert(op) => {
             if let Some(ref provided_context_before) = op.context_before {
                 if op.after_lid != "_START_OF_FILE_" {
-                    let expected_content = strip_prefix(provided_context_before);
+                    let expected_content = provided_context_before;
                     let after_lid_key = FileState::parse_index(&op.after_lid)?;
                     match file_state.lines.get(&after_lid_key) {
                         Some(actual_line) => {
@@ -300,7 +287,7 @@ pub(crate) fn verify_patch_context(
                 }
             }
             if let Some(ref provided_context_after) = op.context_after {
-                let expected_content = strip_prefix(provided_context_after);
+                let expected_content = provided_context_after;
                 let after_lid_key = if op.after_lid == "_START_OF_FILE_" {
                     None
                 } else {
@@ -343,7 +330,7 @@ pub(crate) fn verify_patch_context(
         PatchOperation::Replace(op) => {
             let start_lid_key = FileState::parse_index(&op.start_lid)?;
             if let Some(ref provided_context_before) = op.context_before {
-                let expected_content = strip_prefix(provided_context_before);
+                let expected_content = provided_context_before;
                 match file_state.lines.range(..start_lid_key).next_back() {
                     Some((lid, actual_line)) => {
                         if normalize_whitespace(actual_line)
@@ -370,7 +357,7 @@ pub(crate) fn verify_patch_context(
             }
             let end_lid_key = FileState::parse_index(&op.end_lid)?;
             if let Some(ref provided_context_after) = op.context_after {
-                let expected_content = strip_prefix(provided_context_after);
+                let expected_content = provided_context_after;
                 match file_state.lines.range(end_lid_key..).nth(1) {
                     Some((lid, actual_line)) => {
                         if normalize_whitespace(actual_line)

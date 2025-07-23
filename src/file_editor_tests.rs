@@ -292,50 +292,6 @@ mod tests {
     }
 
     #[test]
-    fn test_execute_patch_with_lid_in_context() {
-        let (_tmp_dir, file_path) = setup_test_file("line 1\nline 3");
-        let mut manager = FileStateManager::new();
-        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
-
-        let initial_state = manager.open_file(&file_path).unwrap();
-        let initial_short_hash = initial_state.get_short_hash().to_string();
-        let initial_indexes = initial_state
-            .lines
-            .keys()
-            .map(|k| k.to_string())
-            .collect::<Vec<_>>();
-
-        // The AI provides context with the LID prefix, which should now be handled.
-        let args = FileOperationArgs {
-            edits: vec![PatchArgs {
-                file_path: file_path.clone(),
-                lif_hash: initial_short_hash.clone(),
-                patch: vec![PatchOperation::Insert(InsertOperation {
-                    after_lid: initial_indexes[0].clone(),
-                    content: vec!["line 2".to_string()],
-                    context_before: Some(format!("{}: line 1", initial_indexes[0])), // Incorrectly includes LID
-                    context_after: Some(format!("{}: line 3", initial_indexes[1])), // Incorrectly includes LID
-                })],
-            }],
-            copies: vec![],
-            moves: vec![],
-        };
-
-        let result = execute_file_operations(&args, &mut manager, &accessible_paths);
-        assert!(result.is_ok(), "Operation should succeed");
-
-        let output = result.unwrap();
-        assert!(
-            !output.contains("Error:"),
-            "Result should not contain an error message, but was: {output}"
-        );
-        assert!(output.contains("Patch from hash"));
-
-        let disk_content = fs::read_to_string(&file_path).unwrap();
-        assert_eq!(disk_content, "line 1\nline 2\nline 3");
-    }
-
-    #[test]
     fn test_execute_patch_with_whitespace_mismatch_in_context() {
         // Setup a file with extra whitespace
         let (_tmp_dir, file_path) = setup_test_file("line 1\n\n  line 3  ");
