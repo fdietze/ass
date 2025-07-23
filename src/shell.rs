@@ -66,6 +66,8 @@ pub async fn execute_shell_command(command: &str, allowed_prefixes: &[String]) -
     }
 
     // --- Execution ---
+    println!("> {}", style(command).bold());
+
     // To interleave stdout and stderr, we redirect stderr to stdout (2>&1).
     // This gives us a single, combined output stream, just like in a terminal.
     let mut child = Command::new("sh")
@@ -110,23 +112,22 @@ pub async fn execute_shell_command(command: &str, allowed_prefixes: &[String]) -
     }
 
     let status = child.wait().await?;
-    let interleaved_output = output_lines.join("\n");
+    let mut interleaved_output = output_lines.join("\n");
 
     // --- Output Handling ---
-    let command_bold = style(command).bold();
+    let exit_code_string = status.to_string();
     let exit_code_colored = if status.success() {
-        style(status.to_string()).green()
+        style(&exit_code_string).green()
     } else {
-        style(status.to_string()).red()
+        style(&exit_code_string).red()
     };
+    println!("{exit_code_colored}");
 
-    let mut result = format!("> {command_bold}");
-
-    if !interleaved_output.trim().is_empty() {
-        result.push_str(&format!("\n{interleaved_output}"));
+    // Append the uncolored status to the output for the LLM
+    if !interleaved_output.is_empty() {
+        interleaved_output.push('\n');
     }
+    interleaved_output.push_str(&exit_code_string);
 
-    result.push_str(&format!("\n{exit_code_colored}"));
-
-    Ok(result)
+    Ok(interleaved_output)
 }

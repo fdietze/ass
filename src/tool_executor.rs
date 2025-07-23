@@ -35,15 +35,15 @@ pub async fn handle_tool_call(
                 )),
             };
 
-            let (colored_output, uncolored_output) = match result {
-                Ok(output) => (output.clone(), strip_str(&output)),
+            let uncolored_output = match result {
+                Ok(output) => output,
                 Err(e) => {
                     let error_msg = format!("Error executing command: {e}");
-                    (style(error_msg.clone()).red().to_string(), error_msg)
+                    println!("{}", style(error_msg.clone()).red());
+                    error_msg
                 }
             };
 
-            println!("{colored_output}");
             Ok(Message {
                 role: "tool".to_string(),
                 content: uncolored_output,
