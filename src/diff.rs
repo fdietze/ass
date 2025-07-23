@@ -43,7 +43,11 @@ pub fn generate_custom_diff(
 
                         if old_normalized == new_normalized {
                             // Whitespace-only change found. Print the new line as neutral.
-                            diff_lines.push(format!("  {}: {}", new_keys[new_range.start].to_string(), new_line));
+                            diff_lines.push(format!(
+                                "  {}: {}",
+                                new_keys[new_range.start].to_string(),
+                                new_line
+                            ));
                             i += 1;
                             continue;
                         }
@@ -84,7 +88,11 @@ pub fn generate_custom_diff(
                 }
                 DiffTag::Equal => {
                     for i in new_range {
-                        diff_lines.push(format!("  {}: {}", new_keys[i].to_string(), new_content[i]));
+                        diff_lines.push(format!(
+                            "  {}: {}",
+                            new_keys[i].to_string(),
+                            new_content[i]
+                        ));
                     }
                 }
             }

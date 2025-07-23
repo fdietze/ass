@@ -3,7 +3,7 @@ use anyhow::Result;
 use console::style;
 use std::path::Path;
 
-pub async fn expand_file_mentions(
+pub fn expand_file_mentions(
     original_prompt: &str,
     config: &crate::config::Config,
     file_state_manager: &mut FileStateManager,

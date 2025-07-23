@@ -6,7 +6,7 @@ use clap::Parser;
 #[command(version, about, long_about = None)]
 pub struct Cli {
     /// The prompt for the agent
-    pub prompt: String,
+    pub prompt: Option<String>,
 
     #[command(flatten)]
     pub overrides: ConfigLayer,

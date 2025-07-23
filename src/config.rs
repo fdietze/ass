@@ -49,7 +49,7 @@ pub struct ConfigLayer {
     pub terminal_bell: Option<bool>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(default)]
 pub struct Config {
     pub model: String,
