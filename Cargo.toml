@@ -4,8 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# git hash 1d9dc980b243ac483c9c0d5a2f8c8c1c5904927b
-openrouter_api = { git = "https://github.com/socrates8300/openrouter_api.git", rev = "1d9dc980b243ac483c9c0d5a2f8c8c1c5904927b" }
+openrouter_api = { git = "https://github.com/fdietze/openrouter_api.git", rev = "1c5ad15" }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1.0"
 serde_json = { version = "1", features = ["preserve_order"] }

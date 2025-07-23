@@ -1033,7 +1033,7 @@ checksum = "a4895175b425cb1f87721b59f0f286c2092bd4af812243672510e1ac53e2e0ad"
 [[package]]
 name = "openrouter_api"
 version = "0.1.6"
-source = "git+https://github.com/socrates8300/openrouter_api.git?rev=1d9dc980b243ac483c9c0d5a2f8c8c1c5904927b#1d9dc980b243ac483c9c0d5a2f8c8c1c5904927b"
+source = "git+https://github.com/fdietze/openrouter_api.git?rev=1c5ad15#1c5ad154301dc28afe615a9f03d99f878a41f096"
 dependencies = [
  "async-stream",
  "futures",
