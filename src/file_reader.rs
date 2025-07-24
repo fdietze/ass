@@ -22,10 +22,10 @@ pub fn read_file_tool_schema() -> Tool {
         function: FunctionDescription {
             name: "read_file".to_string(),
             description: Some(
-                "Reads one or more files into context. Can read full files or specific line ranges.
-You can request multiple, non-contiguous ranges from a single file in one go.
-If you are reading because of compiler or linter errors, only read specific ranges.
-Each file's output is separated. If more than one file is requested, the output for each file will be preceded by a header.
+                r#"CRITICAL: DO NOT use this tool if the file's content is already in your context from the conversation history or attached files. Attached files are always fresh. It is wasteful and unnecessary. Follow the user's instruction using the information you already have.
+Use this tool ONLY to read a file for the first time, or if you have reason to believe it has been changed by an external process.
+
+Reads files or line ranges.
 
 **Output Format**:
 Each line is prefixed with its line number and a unique Line Identifier (LID). The LID is crucial for any subsequent edits.
@@ -39,9 +39,7 @@ File: jokes.txt | Hash: 931d3b24 | Lines: 1-1/1
 **How to Use the Output**:
 - The first number (`1`) is the line number, for display only.
 - The second value (`80`) is the Line Identifier (LID).
-- When using `edit_file`, you MUST provide the LID (e.g., `80`), not the line number (`1`).
-
-**IMPORTANT**: The `edit_file` tool provides the new hash after a successful edit. If you have this hash and the necessary line indexes, **don't read the file again**. Only use this tool for initial reads."
+- When using `edit_file`, you MUST provide the LID (e.g., `80`), not the line number (`1`)."#
                     .to_string(),
             ),
             parameters: serde_json::json!({

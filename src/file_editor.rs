@@ -42,9 +42,9 @@ pub struct TopLevelRequest {
     #[serde(default)]
     pub replaces: Vec<ReplaceRequest>,
     #[serde(default)]
-    pub moves: Vec<MoveCopyRequest>,
+    pub moves: Vec<MoveRequest>,
     #[serde(default)]
-    pub copies: Vec<MoveCopyRequest>,
+    pub copies: Vec<CopyRequest>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -75,8 +75,18 @@ pub struct ReplaceRequest {
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
-pub struct MoveCopyRequest {
-    pub op: String, // "move" or "copy"
+pub struct MoveRequest {
+    pub source_file_path: String,
+    pub source_start_anchor: Anchor,
+    pub source_end_anchor: Anchor,
+    pub dest_file_path: String,
+    pub dest_at_position: Position,
+    pub dest_anchor: Option<Anchor>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+pub struct CopyRequest {
     pub source_file_path: String,
     pub source_start_anchor: Anchor,
     pub source_end_anchor: Anchor,
@@ -91,6 +101,8 @@ pub fn edit_file_tool_schema() -> Tool {
             name: "edit_file".to_string(),
             description: Some(
                 r#"Atomically performs a series of file editing operations using a robust anchor-based system.
+After a successful edit, this tool's output provides the new file hash. You have the latest file state; DO NOT call read_file afterward.
+
 All operations are planned based on the files' initial state. Line Anchors (LID + content) MUST be valid at the beginning of the tool call.
 
 **Execution Order**: Operations are always executed in a fixed order: 1. Copies, 2. Moves, 3. Replaces, 4. Inserts.
@@ -113,7 +125,6 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                             "type": "object",
                             "title": "Copy Operation",
                             "properties": {
-                                "op": { "const": "copy" },
                                 "source_file_path": { "type": "string", "description": "Path of the file to copy lines from." },
                                 "source_start_anchor": {
                                     "type": "object",
@@ -160,7 +171,7 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                     "required": ["lid", "line_content"]
                                 }
                             },
-                            "required": ["op", "source_file_path", "source_start_anchor", "source_end_anchor", "dest_file_path", "dest_at_position"]
+                            "required": ["source_file_path", "source_start_anchor", "source_end_anchor", "dest_file_path", "dest_at_position"]
                         }
                     },
                     "moves": {
@@ -170,7 +181,6 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                             "type": "object",
                             "title": "Move Operation",
                             "properties": {
-                                "op": { "const": "move" },
                                 "source_file_path": { "type": "string", "description": "Path of the file to move lines from." },
                                 "source_start_anchor": {
                                     "type": "object",
@@ -217,7 +227,7 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                     "required": ["lid", "line_content"]
                                 }
                             },
-                            "required": ["op", "source_file_path", "source_start_anchor", "source_end_anchor", "dest_file_path", "dest_at_position"]
+                            "required": ["source_file_path", "source_start_anchor", "source_end_anchor", "dest_file_path", "dest_at_position"]
                         }
                     },
                     "replaces": {
@@ -346,26 +356,25 @@ pub fn execute_file_operations(
     // --- Phase 1: Plan and Validate all operations ---
     // The order here is fixed and documented for the LLM: copies, moves, replaces, inserts.
     let planning_result: Result<()> = (|| {
-        // Plan Copies and Moves
-        for req in args.copies.iter().chain(args.moves.iter()) {
-            let op_name = &req.op;
+        // Plan Copies
+        for req in &args.copies {
             permissions::is_path_accessible(Path::new(&req.source_file_path), accessible_paths)?;
             permissions::is_path_accessible(Path::new(&req.dest_file_path), accessible_paths)?;
 
-            let (source_path, content_to_transfer) = {
+            let (_source_path, content_to_transfer) = {
                 let source_state = file_state_manager.open_file(&req.source_file_path)?;
                 validate_anchor(
                     source_state,
                     &req.source_start_anchor.lid,
                     &req.source_start_anchor.line_content,
-                    op_name,
+                    "copy",
                     "source_start_anchor",
                 )?;
                 validate_anchor(
                     source_state,
                     &req.source_end_anchor.lid,
                     &req.source_end_anchor.line_content,
-                    op_name,
+                    "copy",
                     "source_end_anchor",
                 )?;
                 let content = source_state
@@ -385,21 +394,74 @@ pub fn execute_file_operations(
                         dest_state,
                         &anchor.lid,
                         &anchor.line_content,
-                        op_name,
+                        "copy",
                         "dest_anchor",
                     )?;
                     Some(FileState::parse_index(&anchor.lid)?)
                 }
             };
 
-            if req.op == "move" {
-                let delete_op = PatchOperation::Replace(ReplaceOp {
-                    start_lid: FileState::parse_index(&req.source_start_anchor.lid)?,
-                    end_lid: FileState::parse_index(&req.source_end_anchor.lid)?,
-                    content: vec![],
-                });
-                planned_ops.entry(source_path).or_default().push(delete_op);
-            }
+            let insert_op = PatchOperation::Insert(InsertOp {
+                after_lid,
+                content: content_to_transfer,
+            });
+            planned_ops
+                .entry(dest_state.path.clone())
+                .or_default()
+                .push(insert_op);
+        }
+
+        // Plan Moves
+        for req in &args.moves {
+            permissions::is_path_accessible(Path::new(&req.source_file_path), accessible_paths)?;
+            permissions::is_path_accessible(Path::new(&req.dest_file_path), accessible_paths)?;
+
+            let (source_path, content_to_transfer) = {
+                let source_state = file_state_manager.open_file(&req.source_file_path)?;
+                validate_anchor(
+                    source_state,
+                    &req.source_start_anchor.lid,
+                    &req.source_start_anchor.line_content,
+                    "move",
+                    "source_start_anchor",
+                )?;
+                validate_anchor(
+                    source_state,
+                    &req.source_end_anchor.lid,
+                    &req.source_end_anchor.line_content,
+                    "move",
+                    "source_end_anchor",
+                )?;
+                let content = source_state
+                    .get_lines_in_range(&req.source_start_anchor.lid, &req.source_end_anchor.lid)?;
+                (source_state.path.clone(), content)
+            };
+
+            let dest_state = file_state_manager.open_file(&req.dest_file_path)?;
+            let after_lid = match req.dest_at_position {
+                Position::StartOfFile => None,
+                Position::EndOfFile => dest_state.lines.last_key_value().map(|(k, _)| k.clone()),
+                Position::AfterAnchor => {
+                    let anchor = req.dest_anchor.as_ref().ok_or_else(|| {
+                        anyhow!("`dest_anchor` is required for `after_anchor` position.")
+                    })?;
+                    validate_anchor(
+                        dest_state,
+                        &anchor.lid,
+                        &anchor.line_content,
+                        "move",
+                        "dest_anchor",
+                    )?;
+                    Some(FileState::parse_index(&anchor.lid)?)
+                }
+            };
+
+            let delete_op = PatchOperation::Replace(ReplaceOp {
+                start_lid: FileState::parse_index(&req.source_start_anchor.lid)?,
+                end_lid: FileState::parse_index(&req.source_end_anchor.lid)?,
+                content: vec![],
+            });
+            planned_ops.entry(source_path).or_default().push(delete_op);
 
             let insert_op = PatchOperation::Insert(InsertOp {
                 after_lid,
