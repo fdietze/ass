@@ -65,7 +65,7 @@ pub struct ConfigLayer {
 #[serde(default)]
 pub struct Config {
     pub model: String,
-    pub system_prompt: String,
+    pub system_prompt: Option<String>,
     pub timeout_seconds: u64,
     pub max_iterations: u8,
     pub max_read_lines: u64,
@@ -86,7 +86,12 @@ impl Config {
             self.model = model.clone();
         }
         if let Some(system_prompt) = &layer.system_prompt {
-            self.system_prompt = system_prompt.clone();
+            // Convert empty or whitespace-only strings to None
+            if system_prompt.trim().is_empty() {
+                self.system_prompt = None;
+            } else {
+                self.system_prompt = Some(system_prompt.clone());
+            }
         }
         if let Some(timeout_seconds) = layer.timeout_seconds {
             self.timeout_seconds = timeout_seconds;
@@ -125,7 +130,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             model: "google/gemini-2.5-flash-preview".to_string(),
-            system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
+            system_prompt: Some(DEFAULT_SYSTEM_PROMPT.to_string()),
             timeout_seconds: 120,
             max_iterations: 5,
             max_read_lines: 1000,
