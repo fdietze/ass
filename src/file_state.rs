@@ -277,13 +277,13 @@ impl FileState {
                     }
                     // Clamp ranges to be within the bounds of the file
                     let start_idx = range.start_line.saturating_sub(1).min(total_lines);
-                    let end_idx = range.end_line.saturating_sub(1).min(total_lines);
+                    let end_idx = range.end_line.min(total_lines);
 
-                    if start_idx > end_idx {
+                    if start_idx >= end_idx {
                         continue;
                     }
 
-                    let range_content = all_lines[start_idx..=end_idx]
+                    let range_content = all_lines[start_idx..end_idx]
                         .iter()
                         .enumerate()
                         .map(|(line_offset, (index, content))| {

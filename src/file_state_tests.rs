@@ -632,3 +632,34 @@ fn test_hash_uniqueness_for_trailing_newline() {
         "BUG: Hashes are identical for files that differ only by a trailing newline."
     );
 }
+
+#[test]
+fn test_get_lif_string_for_range_past_eof() {
+    let (_tmp_dir, file_path) = setup_test_file("1\n2\n3");
+    let state = FileState::new(file_path.clone(), "1\n2\n3");
+
+    // Request a range where end_line is past the end of the file. This should not panic.
+    let representation = state.get_lif_string_for_ranges(Some(&[RangeSpec {
+        start_line: 2,
+        end_line: 5, // There are only 3 lines
+    }]));
+
+    let project_root = std::env::current_dir().unwrap();
+    let relative_path = file_path.strip_prefix(&project_root).unwrap_or(&file_path);
+    let short_hash = state.get_short_hash();
+    let indexes = get_indexes(&state);
+
+    let expected_header = format!(
+        "File: {} | Hash: {} | Lines: 2-5/3",
+        relative_path.display(),
+        short_hash
+    );
+
+    // Note: The body should only contain the lines that actually exist in the range.
+    let expected_body = format!("2    {}: 2\n3    {}: 3", indexes[1], indexes[2]);
+
+    assert_eq!(
+        representation,
+        format!("{expected_header}\n{expected_body}")
+    );
+}
