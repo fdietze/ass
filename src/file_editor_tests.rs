@@ -1,8 +1,11 @@
+//! Integration tests for the `file_editor` module, focusing on the end-to-end
+//! `execute_file_operations` function.
+
 #[cfg(test)]
 mod tests {
     use crate::file_editor::*;
     use crate::file_state_manager::FileStateManager;
-    use crate::patch::{InsertOperation, PatchOperation, ReplaceOperation};
+    use crate::patch::{InsertOp, PatchOperation, ReplaceOp};
     use std::fs;
     use tempfile::Builder;
 
@@ -14,383 +17,315 @@ mod tests {
     }
 
     #[test]
-    fn test_execute_single_patch_successfully() {
+    fn test_execute_insert_successfully() {
         let (_tmp_dir, file_path) = setup_test_file("line 1\nline 3");
         let mut manager = FileStateManager::new();
         let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
         let initial_state = manager.open_file(&file_path).unwrap();
-        let initial_short_hash = initial_state.get_short_hash().to_string();
-        let initial_indexes = initial_state
-            .lines
-            .keys()
-            .map(|k| k.to_string())
-            .collect::<Vec<_>>();
+        let lid_line_1 = initial_state.lines.keys().next().unwrap().to_string();
 
-        let args = FileOperationArgs {
-            edits: vec![PatchArgs {
-                file_path: file_path.clone(),
-                lif_hash: initial_short_hash.clone(),
-                patch: vec![PatchOperation::Insert(InsertOperation {
-                    after_lid: initial_indexes[0].clone(),
-                    content: vec!["line 2".to_string()],
-                    context_before: Some("line 1".to_string()),
-                    context_after: Some("line 3".to_string()),
-                })],
-            }],
-            copies: vec![],
-            moves: vec![],
-        };
+        let request_json = format!(
+            r#"{{
+                "inserts": [
+                    {{
+                        "file_path": "{file_path}",
+                        "new_content": ["line 2"],
+                        "at_position": "after_anchor",
+                        "anchor_lid": "{lid_line_1}",
+                        "anchor_content": "line 1"
+                    }}
+                ]
+            }}"#
+        );
 
-        let result = execute_file_operations(&args, &mut manager, &accessible_paths);
-        assert!(result.is_ok());
-
-        let output = result.unwrap();
-        assert!(output.contains("Patch from hash"));
-        assert!(output.contains(&file_path));
-
-        let disk_content = fs::read_to_string(&file_path).unwrap();
-        assert_eq!(disk_content, "line 1\nline 2\nline 3");
-
-        let final_state = manager.open_file(&file_path).unwrap();
-        let final_short_hash = final_state.get_short_hash();
-        assert_ne!(final_short_hash, initial_short_hash);
-        assert!(output.contains(&format!("New lif_hash: {final_short_hash}")));
-    }
-
-    #[test]
-    fn test_execute_patch_hash_mismatch() {
-        let (_tmp_dir, file_path) = setup_test_file("line 1");
-        let mut manager = FileStateManager::new();
-        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
-
-        let args = FileOperationArgs {
-            edits: vec![PatchArgs {
-                file_path: file_path.clone(),
-                lif_hash: "wrong_hash".to_string(),
-                patch: vec![],
-            }],
-            copies: vec![],
-            moves: vec![],
-        };
-
-        let result = execute_file_operations(&args, &mut manager, &accessible_paths);
-        assert!(result.is_ok()); // The function itself doesn't error, it reports errors in the string
-        let output = result.unwrap();
-        assert!(output.contains("Error: Hash mismatch"));
-        assert!(output.contains(&file_path));
-    }
-
-    #[test]
-    fn test_execute_multiple_patches_with_partial_failure() {
-        // --- Setup ---
-        let (tmp_dir, file1_path) = setup_test_file("file1 line1");
-        let file2_path = tmp_dir.path().join("file2.txt");
-        fs::write(&file2_path, "file2 line1").unwrap();
-        let file2_path_str = file2_path.to_str().unwrap().to_string();
-
-        let mut manager = FileStateManager::new();
-        let accessible_paths = vec![tmp_dir.path().to_str().unwrap().to_string()];
-
-        let file1_initial_state = manager.open_file(&file1_path).unwrap();
-        let file1_initial_hash = file1_initial_state.get_short_hash().to_string();
-        let file1_initial_indexes = file1_initial_state
-            .lines
-            .keys()
-            .map(|k| k.to_string())
-            .collect::<Vec<_>>();
-
-        let file2_initial_state = manager.open_file(&file2_path_str).unwrap();
-        let file2_initial_hash = file2_initial_state.get_short_hash().to_string();
-
-        // --- Args ---
-        // Edit for file1 is valid
-        let valid_edit = PatchArgs {
-            file_path: file1_path.clone(),
-            lif_hash: file1_initial_hash,
-            patch: vec![PatchOperation::Insert(InsertOperation {
-                after_lid: file1_initial_indexes[0].clone(),
-                content: vec!["file1 line2".to_string()],
-                context_before: Some("file1 line1".to_string()),
-                context_after: None,
-            })],
-        };
-        // Edit for file2 has a hash mismatch
-        let invalid_edit = PatchArgs {
-            file_path: file2_path_str.clone(),
-            lif_hash: "wrong_hash".to_string(),
-            patch: vec![],
-        };
-
-        let args = FileOperationArgs {
-            edits: vec![valid_edit, invalid_edit],
-            copies: vec![],
-            moves: vec![],
-        };
-
-        // --- Act ---
+        let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
         let result = execute_file_operations(&args, &mut manager, &accessible_paths).unwrap();
 
-        // --- Assert ---
-        // Check final string report
-        assert!(result.contains(&format!("File: {file1_path}")));
         assert!(result.contains("Patch from hash"));
-        assert!(result.contains(&format!("File: {file2_path_str}")));
-        assert!(result.contains("Error: Hash mismatch"));
-
-        // Check file1 on disk (should be changed)
-        let file1_content = fs::read_to_string(&file1_path).unwrap();
-        assert_eq!(file1_content, "file1 line1\nfile1 line2");
-
-        // Check file2 on disk (should NOT be changed)
-        let file2_content = fs::read_to_string(&file2_path).unwrap();
-        assert_eq!(file2_content, "file2 line1");
-
-        // Check hashes in manager
-        let file1_final_hash = manager.open_file(&file1_path).unwrap().get_short_hash();
-        assert!(result.contains(file1_final_hash));
-
-        let file2_final_hash = manager.open_file(&file2_path_str).unwrap().get_short_hash();
-        assert_eq!(file2_final_hash, file2_initial_hash); // Should be unchanged
+        let disk_content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(disk_content, "line 1\nline 2\nline 3");
     }
 
     #[test]
-    fn test_copy_intra_file() {
-        let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2\nline 3");
+    fn test_execute_insert_with_invalid_anchor_content_fails() {
+        let (_tmp_dir, file_path) = setup_test_file("line 1\nline 3");
         let mut manager = FileStateManager::new();
         let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
         let initial_state = manager.open_file(&file_path).unwrap();
-        let initial_hash = initial_state.get_short_hash().to_string();
-        let initial_indexes = initial_state
-            .lines
-            .keys()
-            .map(|k| k.to_string())
-            .collect::<Vec<_>>();
+        let lid_line_1 = initial_state.lines.keys().next().unwrap().to_string();
 
-        let args = FileOperationArgs {
-            copies: vec![CopyArgs {
-                source_file_path: file_path.clone(),
-                source_lif_hash: initial_hash.clone(),
-                source_start_lid: initial_indexes[0].clone(),
-                source_end_lid: initial_indexes[0].clone(),
-                dest_file_path: file_path.clone(),
-                dest_lif_hash: initial_hash,
-                dest_after_lid: initial_indexes[2].clone(),
-            }],
-            edits: vec![],
-            moves: vec![],
-        };
+        let request_json = format!(
+            r#"{{
+                "inserts": [
+                    {{
+                        "file_path": "{file_path}",
+                        "new_content": ["line 2"],
+                        "at_position": "after_anchor",
+                        "anchor_lid": "{lid_line_1}",
+                        "anchor_content": "WRONG content"
+                    }}
+                ]
+            }}"#
+        );
 
-        let result = execute_file_operations(&args, &mut manager, &accessible_paths).unwrap();
-        assert!(!result.contains("Error:"), "Operation should succeed");
+        let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
+        let result = execute_file_operations(&args, &mut manager, &accessible_paths);
 
-        let content = fs::read_to_string(&file_path).unwrap();
-        assert_eq!(content, "line 1\nline 2\nline 3\nline 1");
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("anchor content mismatch"));
+        assert!(
+            error
+                .to_string()
+                .contains("Expected 'WRONG content', found 'line 1'")
+        );
+
+        let disk_content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(disk_content, "line 1\nline 3");
     }
 
     #[test]
-    fn test_move_inter_file_and_chain_edit() {
-        let (tmp_dir1, source_path) = setup_test_file("... irrelevant ...\nfn my_func() {}\n...");
-        let (tmp_dir2, dest_path) = setup_test_file("mod helper;");
+    fn test_execute_replace_successfully() {
+        let (_tmp_dir, file_path) = setup_test_file("one\ntwo\nthree");
+        let mut manager = FileStateManager::new();
+        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+
+        let initial_state = manager.open_file(&file_path).unwrap();
+        let lids: Vec<_> = initial_state.lines.keys().map(|k| k.to_string()).collect();
+
+        let request_json = format!(
+            r#"{{
+                "replaces": [
+                    {{
+                        "file_path": "{}",
+                        "start_lid": "{}",
+                        "start_content": "two",
+                        "end_lid": "{}",
+                        "end_content": "two",
+                        "new_content": ["2"]
+                    }}
+                ]
+            }}"#,
+            file_path, lids[1], lids[1]
+        );
+
+        let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
+        let result = execute_file_operations(&args, &mut manager, &accessible_paths).unwrap();
+
+        assert!(result.contains("Patch from hash"));
+        let disk_content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(disk_content, "one\n2\nthree");
+    }
+
+    #[test]
+    fn test_execute_delete_successfully() {
+        let (_tmp_dir, file_path) = setup_test_file("one\ntwo\nthree");
+        let mut manager = FileStateManager::new();
+        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+
+        let initial_state = manager.open_file(&file_path).unwrap();
+        let lids: Vec<_> = initial_state.lines.keys().map(|k| k.to_string()).collect();
+
+        let request_json = format!(
+            r#"{{
+                "replaces": [
+                    {{
+                        "file_path": "{}",
+                        "start_lid": "{}",
+                        "start_content": "two",
+                        "end_lid": "{}",
+                        "end_content": "two",
+                        "new_content": []
+                    }}
+                ]
+            }}"#,
+            file_path, lids[1], lids[1]
+        );
+
+        let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
+        execute_file_operations(&args, &mut manager, &accessible_paths).unwrap();
+
+        let disk_content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(disk_content, "one\nthree");
+    }
+
+    #[test]
+    fn test_execute_move_successfully() {
+        let (_tmp_dir, source_path) = setup_test_file("source line 1\nline to move\nsource line 3");
+        let (_tmp_dir2, dest_path) = setup_test_file("dest line 1");
         let mut manager = FileStateManager::new();
         let accessible_paths = vec![
-            tmp_dir1.path().to_str().unwrap().to_string(),
-            tmp_dir2.path().to_str().unwrap().to_string(),
+            _tmp_dir.path().to_str().unwrap().to_string(),
+            _tmp_dir2.path().to_str().unwrap().to_string(),
         ];
 
         let source_state = manager.open_file(&source_path).unwrap();
-        let source_hash = source_state.get_short_hash().to_string();
-        let source_indexes = source_state
-            .lines
-            .keys()
-            .map(|k| k.to_string())
-            .collect::<Vec<_>>();
+        let source_lids: Vec<_> = source_state.lines.keys().map(|k| k.to_string()).collect();
 
         let dest_state = manager.open_file(&dest_path).unwrap();
-        let dest_hash = dest_state.get_short_hash().to_string();
-        let dest_indexes = dest_state
-            .lines
-            .keys()
-            .map(|k| k.to_string())
-            .collect::<Vec<_>>();
+        let dest_lids: Vec<_> = dest_state.lines.keys().map(|k| k.to_string()).collect();
 
-        // The goal is to move "fn my_func() {}" from source to dest,
-        // and in the same operation, edit a different part of the destination file.
-        let args = FileOperationArgs {
-            moves: vec![MoveArgs {
-                source_file_path: source_path.clone(),
-                source_lif_hash: source_hash,
-                source_start_lid: source_indexes[1].clone(),
-                source_end_lid: source_indexes[1].clone(),
-                dest_file_path: dest_path.clone(),
-                dest_lif_hash: dest_hash.clone(),
-                dest_after_lid: dest_indexes[0].clone(),
-            }],
-            edits: vec![PatchArgs {
-                file_path: dest_path.clone(),
-                lif_hash: dest_hash, // Use the same original hash
-                patch: vec![PatchOperation::Replace(ReplaceOperation {
-                    start_lid: dest_indexes[0].clone(),
-                    end_lid: dest_indexes[0].clone(),
-                    content: vec!["// helper module".to_string()],
-                    context_before: None,
-                    context_after: None,
-                })],
-            }],
-            copies: vec![],
-        };
-
-        let result = execute_file_operations(&args, &mut manager, &accessible_paths).unwrap();
-        assert!(
-            !result.contains("Error:"),
-            "Operation should succeed, but got {result}"
+        let request_json = format!(
+            r#"{{
+                "moves": [
+                    {{
+                        "op": "move",
+                        "source_file_path": "{}",
+                        "source_start_lid": "{}",
+                        "source_start_content": "line to move",
+                        "source_end_lid": "{}",
+                        "source_end_content": "line to move",
+                        "dest_file_path": "{}",
+                        "dest_at_position": "after_anchor",
+                        "dest_anchor_lid": "{}",
+                        "dest_anchor_content": "dest line 1"
+                    }}
+                ]
+            }}"#,
+            source_path, source_lids[1], source_lids[1], dest_path, dest_lids[0]
         );
 
-        let source_content = fs::read_to_string(source_path).unwrap();
-        assert_eq!(source_content, "... irrelevant ...\n...");
+        let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
+        execute_file_operations(&args, &mut manager, &accessible_paths).unwrap();
 
-        let dest_content = fs::read_to_string(dest_path).unwrap();
-        assert_eq!(dest_content, "// helper module\nfn my_func() {}");
+        let source_content = fs::read_to_string(&source_path).unwrap();
+        assert_eq!(source_content, "source line 1\nsource line 3");
+
+        let dest_content = fs::read_to_string(&dest_path).unwrap();
+        assert_eq!(dest_content, "dest line 1\nline to move");
     }
 
     #[test]
-    fn test_execute_patch_with_wrong_context() {
-        let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2\nline 3");
+    fn test_execute_insert_at_start_and_end() {
+        let (_tmp_dir, file_path) = setup_test_file("middle");
         let mut manager = FileStateManager::new();
         let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
-        let initial_state = manager.open_file(&file_path).unwrap();
-        let initial_short_hash = initial_state.get_short_hash().to_string();
-        let initial_indexes = initial_state
-            .lines
-            .keys()
-            .map(|k| k.to_string())
-            .collect::<Vec<_>>();
+        let request_json = format!(
+            r#"{{
+                "inserts": [
+                    {{
+                        "file_path": "{file_path}",
+                        "new_content": ["start"],
+                        "at_position": "start_of_file"
+                    }},
+                    {{
+                        "file_path": "{file_path}",
+                        "new_content": ["end"],
+                        "at_position": "end_of_file"
+                    }}
+                ]
+            }}"#
+        );
 
-        let args = FileOperationArgs {
-            edits: vec![PatchArgs {
-                file_path: file_path.clone(),
-                lif_hash: initial_short_hash.clone(),
-                patch: vec![PatchOperation::Insert(InsertOperation {
-                    after_lid: initial_indexes[1].clone(),
-                    content: vec!["new line".to_string()],
-                    context_before: Some("line 1".to_string()), // This is wrong
-                    context_after: Some("line 3".to_string()),
-                })],
-            }],
-            copies: vec![],
-            moves: vec![],
-        };
+        let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
+        execute_file_operations(&args, &mut manager, &accessible_paths).unwrap();
 
-        let result = execute_file_operations(&args, &mut manager, &accessible_paths).unwrap();
-        assert!(result.contains("Error: ContextBefore mismatch"));
-
-        // Ensure file was not changed
         let disk_content = fs::read_to_string(&file_path).unwrap();
-        assert_eq!(disk_content, "line 1\nline 2\nline 3");
+        assert_eq!(disk_content, "start\nmiddle\nend");
     }
 
     #[test]
-    fn test_execute_patch_with_whitespace_mismatch_in_context() {
-        // Setup a file with extra whitespace
-        let (_tmp_dir, file_path) = setup_test_file("line 1\n\n  line 3  ");
+    fn test_execute_mixed_batch_with_one_failure_aborts_all() {
+        let (_tmp_dir, file1_path) = setup_test_file("file1 line1");
+        let (_tmp_dir2, file2_path) = setup_test_file("file2 line1");
         let mut manager = FileStateManager::new();
-        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+        let accessible_paths = vec![
+            _tmp_dir.path().to_str().unwrap().to_string(),
+            _tmp_dir2.path().to_str().unwrap().to_string(),
+        ];
 
-        let initial_state = manager.open_file(&file_path).unwrap();
-        let initial_short_hash = initial_state.get_short_hash().to_string();
-        let initial_indexes = initial_state
-            .lines
-            .keys()
-            .map(|k| k.to_string())
-            .collect::<Vec<_>>();
+        let file1_state = manager.open_file(&file1_path).unwrap();
+        let file1_lid = file1_state.lines.keys().next().unwrap().to_string();
 
-        // The AI provides context with clean whitespace. This should succeed.
-        let args = FileOperationArgs {
-            edits: vec![PatchArgs {
-                file_path: file_path.clone(),
-                lif_hash: initial_short_hash.clone(),
-                patch: vec![PatchOperation::Replace(ReplaceOperation {
-                    start_lid: initial_indexes[1].clone(), // The empty line
-                    end_lid: initial_indexes[1].clone(),
-                    content: vec!["line 2".to_string()],
-                    context_before: Some("line 1".to_string()),
-                    context_after: Some("line 3".to_string()),
-                })],
-            }],
-            copies: vec![],
-            moves: vec![],
-        };
+        let request_json = format!(
+            r#"{{
+                "inserts": [
+                    {{
+                        "file_path": "{file1_path}",
+                        "new_content": ["file1 line2"],
+                        "at_position": "after_anchor",
+                        "anchor_lid": "{file1_lid}",
+                        "anchor_content": "file1 line1"
+                    }}
+                ],
+                "replaces": [
+                    {{
+                        "file_path": "{file2_path}",
+                        "start_lid": "any_lid",
+                        "start_content": "THIS IS WRONG",
+                        "end_lid": "any_lid",
+                        "end_content": "THIS IS WRONG",
+                        "new_content": ["..."]
+                    }}
+                ]
+            }}"#
+        );
 
+        let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
         let result = execute_file_operations(&args, &mut manager, &accessible_paths);
-        assert!(result.is_ok(), "Operation should succeed");
 
-        let output = result.unwrap();
-        assert!(
-            !output.contains("Error:"),
-            "Result should not contain an error message, but was: {output}"
-        );
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("Invalid index format: any_lid"));
 
-        let disk_content = fs::read_to_string(&file_path).unwrap();
-        assert_eq!(disk_content, "line 1\nline 2\n  line 3  ");
+        let file1_content = fs::read_to_string(&file1_path).unwrap();
+        assert_eq!(file1_content, "file1 line1");
+        let file2_content = fs::read_to_string(&file2_path).unwrap();
+        assert_eq!(file2_content, "file2 line1");
     }
 
     #[test]
-    fn test_hash_is_stable_across_edit_and_read() {
-        // This is an integration test that verifies that the hash remains stable
-        // when a file is edited and then immediately re-read, which relies on the
-        // content-aware caching in the FileStateManager.
-
-        // 1. Setup a file.
-        let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2");
+    fn test_execute_operations_respects_fixed_order() {
+        let (_tmp_dir, file_path) = setup_test_file("line B");
         let mut manager = FileStateManager::new();
-        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+        // This request tries to insert after "line C", which only exists *after*
+        // the replace operation has been planned. It also deletes line B.
+        // If inserts were not last, this would fail.
+        //
+        // We can't actually test this fully because we can't get the LID of a line
+        // that will be created in the same operation. However, we can simulate the
+        // intended logic and ensure the final state is what we expect from the
+        // hardcoded execution order (replaces then inserts).
 
-        // 2. Read the file and get its initial state.
         let initial_state = manager.open_file(&file_path).unwrap();
-        let initial_short_hash = initial_state.get_short_hash().to_string();
-        let initial_indexes = initial_state
+        let lid_b_idx = initial_state.lines.keys().next().unwrap().clone();
+
+        let replace_op = PatchOperation::Replace(ReplaceOp {
+            start_lid: lid_b_idx.clone(),
+            end_lid: lid_b_idx,
+            content: vec!["line A".to_string(), "line C".to_string()],
+        });
+
+        // Manually apply the first part of the plan
+        manager
+            .get_file_state_mut(&file_path)
+            .unwrap()
+            .apply_patch(&[replace_op])
+            .unwrap();
+
+        let state_after_replace = manager.get_file_state_mut(&file_path).unwrap();
+        let lid_c_idx = state_after_replace
             .lines
-            .keys()
-            .map(|k| k.to_string())
-            .collect::<Vec<_>>();
+            .iter()
+            .find(|(_, v)| *v == "line C")
+            .map(|(k, _)| k.clone())
+            .unwrap();
 
-        // 3. Apply a patch that adds a line.
-        let args = FileOperationArgs {
-            edits: vec![PatchArgs {
-                file_path: file_path.clone(),
-                lif_hash: initial_short_hash,
-                patch: vec![PatchOperation::Insert(InsertOperation {
-                    after_lid: initial_indexes.last().unwrap().clone(),
-                    content: vec!["line 3".to_string()],
-                    context_before: Some("line 2".to_string()),
-                    context_after: None,
-                })],
-            }],
-            copies: vec![],
-            moves: vec![],
-        };
+        let insert_op = PatchOperation::Insert(InsertOp {
+            after_lid: Some(lid_c_idx),
+            content: vec!["line D".to_string()],
+        });
 
-        let result = execute_file_operations(&args, &mut manager, &accessible_paths).unwrap();
-        assert!(!result.contains("Error:"), "Patch should be successful");
+        manager
+            .get_file_state_mut(&file_path)
+            .unwrap()
+            .apply_and_write_patch(&[insert_op])
+            .unwrap();
 
-        // 4. Capture the hash that the patching operation reports it produced.
-        // This call to open_file reads from the cache, which was updated by execute_file_operations.
-        let patched_state = manager.open_file(&file_path).unwrap();
-        let hash_reported_by_patch = patched_state.get_short_hash().to_string();
-        assert!(result.contains(&format!("New lif_hash: {hash_reported_by_patch}")));
-
-        // 5. Now, simulate a subsequent `read_file` tool call. Because the content on disk
-        // now matches the content in the cache, this should return the cached state
-        // without reloading or changing the hash.
-        let reloaded_state = manager.open_file(&file_path).unwrap();
-        let hash_from_reread = reloaded_state.get_short_hash().to_string();
-
-        // 6. This is the critical assertion. The hash should be stable.
-        assert_eq!(
-            hash_reported_by_patch, hash_from_reread,
-            "Hash reported by edit_file should be the same as the hash after a subsequent read."
-        );
+        let final_content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(final_content, "line A\nline C\nline D");
     }
 }

@@ -1,110 +1,88 @@
-//! # File Patcher Tool
+//! # File Editor Tool
 //!
-//! This module provides the `edit_file` tool, which is the agent's interface to the
-//! LIF-Patch protocol implemented in `file_state.rs`. Its primary responsibilities are:
+//! This module provides the `edit_file` tool. Its primary responsibilities are:
 //!
 //! 1.  **Schema Definition**: Defines the JSON schema for the `edit_file` tool. This schema
-//!     is sent to the LLM, instructing it on how to format its patch requests. The description
-//!     within the schema is critical for the LLM to understand the protocol correctly.
+//!     is sent to the LLM, instructing it on how to format its edit requests. It uses
+//!     dedicated "buckets" (`inserts`, `replaces`, etc.) for clarity.
 //!
-//! 2.  **Request Handling**: Implements `execute_file_patch`, the function that orchestrates
-//!     the entire patching process.
+//! 2.  **Request Handling & Validation**: Implements `execute_file_operations`, the function
+//!     that orchestrates the entire editing process. It receives a batch of requested
+//!     operations from the LLM, grouped by type.
 //!
-//! 3.  **State and Safety Checks**: Before applying a patch, it performs crucial checks:
-//!     -   **Path Permissions**: Ensures the target file is within the user-configured `editable_paths`.
-//!     -   **Hash Verification**: Compares the `lif_hash` from the LLM's request with the current
-//!         hash stored in the `FileState`. This is the most important safety check, preventing
-//!         edits on stale file versions.
+//! 3.  **Anchor Validation**: Before translating requests into internal commands, it performs
+//!     the crucial **LineAnchor** validation. This is the core safety mechanism.
 //!
-//! 4.  **Diff Generation**: After a patch is successfully applied, it generates a human-readable
-//!     diff of the changes, which is then returned to the LLM and displayed to the user.
+//! 4.  **Translation**: Validated requests are translated into simple, internal `PatchOperation`
+//!     primitives, which are then passed to the `FileState` module for execution.
 
 use crate::file_state::FileState;
 use crate::file_state_manager::FileStateManager;
-use crate::patch::{PatchOperation, ReplaceOperation};
+use crate::patch::{InsertOp, PatchOperation, ReplaceOp};
 use crate::permissions;
 use anyhow::{Result, anyhow};
 use openrouter_api::models::tool::{FunctionDescription, Tool};
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Represents the arguments for a single file patch operation within a batch.
+// --- Tool-Facing Request Structs ---
+// These structs define the public API of the `edit_file` tool.
+
+#[derive(Deserialize, Debug)]
+pub struct TopLevelRequest {
+    #[serde(default)]
+    pub inserts: Vec<InsertRequest>,
+    #[serde(default)]
+    pub replaces: Vec<ReplaceRequest>,
+    #[serde(default)]
+    pub moves: Vec<MoveCopyRequest>,
+    #[serde(default)]
+    pub copies: Vec<MoveCopyRequest>,
+}
+
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Position {
+    StartOfFile,
+    EndOfFile,
+    AfterAnchor,
+}
+
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
-pub struct PatchArgs {
-    /// The path to the file that the patch should be applied to.
+pub struct InsertRequest {
     pub file_path: String,
-    /// The hash of the file state (`lif_hash`) that the LLM is basing this patch on.
-    /// This is the key to preventing state desynchronization.
-    pub lif_hash: String,
-    /// A sequence of operations that constitute the patch.
-    pub patch: Vec<PatchOperation>,
+    pub new_content: Vec<String>,
+    pub at_position: Position,
+    pub anchor_lid: Option<String>,
+    pub anchor_content: Option<String>,
 }
 
-/// Represents the arguments for a copy operation.
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
-pub struct CopyArgs {
-    /// The path of the file to copy lines from.
+pub struct ReplaceRequest {
+    pub file_path: String,
+    pub start_lid: String,
+    pub start_content: String,
+    pub end_lid: String,
+    pub end_content: String,
+    pub new_content: Vec<String>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+pub struct MoveCopyRequest {
+    pub op: String, // "move" or "copy"
     pub source_file_path: String,
-    /// The lif_hash of the source file.
-    pub source_lif_hash: String,
-    /// The starting line identifier of the range to copy.
     pub source_start_lid: String,
-    /// The ending line identifier of the range to copy.
+    pub source_start_content: String,
     pub source_end_lid: String,
-    /// The path of the file to copy lines to. Can be the same as source_file_path.
+    pub source_end_content: String,
     pub dest_file_path: String,
-    /// The lif_hash of the destination file.
-    pub dest_lif_hash: String,
-    /// The line identifier in the destination file after which to insert the content.
-    pub dest_after_lid: String,
-}
-
-/// Represents the arguments for a move operation.
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "snake_case")]
-pub struct MoveArgs {
-    /// The path of the file to move lines from.
-    pub source_file_path: String,
-    /// The lif_hash of the source file.
-    pub source_lif_hash: String,
-    /// The starting line identifier of the range to move.
-    pub source_start_lid: String,
-    /// The ending line identifier of the range to move.
-    pub source_end_lid: String,
-    /// The path of the file to move lines to. Can be the same as source_file_path.
-    pub dest_file_path: String,
-    /// The lif_hash of the destination file.
-    pub dest_lif_hash: String,
-    /// The line identifier in the destination file after which to insert the content.
-    pub dest_after_lid: String,
-}
-
-/// Helper to deserialize a field that can be `null` into a default value.
-fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    T: Default + Deserialize<'de>,
-    D: Deserializer<'de>,
-{
-    let opt = Option::deserialize(deserializer)?;
-    Ok(opt.unwrap_or_default())
-}
-
-/// Represents the arguments for the `edit_file` tool, which can handle multiple file creations and edits.
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "snake_case")]
-pub struct FileOperationArgs {
-    /// A list of patch operations to be applied to one or more existing files.
-    #[serde(default, deserialize_with = "deserialize_null_default")]
-    pub edits: Vec<PatchArgs>,
-    /// A list of copy operations.
-    #[serde(default, deserialize_with = "deserialize_null_default")]
-    pub copies: Vec<CopyArgs>,
-    /// A list of move operations.
-    #[serde(default, deserialize_with = "deserialize_null_default")]
-    pub moves: Vec<MoveArgs>,
+    pub dest_at_position: Position,
+    pub dest_anchor_lid: Option<String>,
+    pub dest_anchor_content: Option<String>,
 }
 
 pub fn edit_file_tool_schema() -> Tool {
@@ -112,133 +90,95 @@ pub fn edit_file_tool_schema() -> Tool {
         function: FunctionDescription {
             name: "edit_file".to_string(),
             description: Some(
-                r#"Atomically edits, copies, or moves lines between **existing** files using a line-based protocol (LIF-Patch).
+                r#"Atomically performs a series of file editing operations using a robust anchor-based system.
+All operations are planned based on the files' initial state. Line Anchors (LID + content) MUST be valid at the beginning of the tool call.
 
-**IMPORTANT Execution Model**: All operations in a single call are **planned** based on the *initial state* of the files. The tool gathers all requested changes and applies them on a per-file basis. This means all LIDs (`source_start_lid`, `dest_after_lid`, etc.) and `lif_hash` values you provide MUST be valid in the files as they were *before* this tool call began.
+**Execution Order**: Operations are always executed in a fixed order: 1. Copies, 2. Moves, 3. Replaces, 4. Inserts.
 
-**Prefer Moves Over Edits**: This is IMPORTANT: Always use the `moves` operation instead of `edits` where possible. For example: moving or extracting code. This avoids LLM spelling mistakes, saves tokens, and is more robust.
+**Line Anchors**: An anchor is a combination of a line's unique identifier (`lid`) and its exact `content`. Both must be provided and must match the file exactly for an operation to succeed.
 
-**Execution Order**: Operations are planned in this fixed order: 1. `copies`, 2. `moves`, 3. `edits`.
-
-**Strategy for Complex Operations**:
-- **Moving Multiple Blocks**: To move separate blocks, provide a separate `moves` object for each. To place them together, use the **exact same `dest_after_lid`** for each `moves` object.
-- **Think in Hunks**: For `edits`, prefer replacing a whole logical block (like a function) instead of many small edits.
-- **Parentheses**: Pay special attention to parentheses. Will they be still balanced after the edit?
-
-**Patch Details for `edits`**:
-- **LIDs vs Line Numbers**: The `read_file` tool's output shows both a line number and a Line Identifier (LID). You MUST use the LID for all `*_lid` fields (e.g., `start_lid`, `after_lid`). The LID is the fractional index (like `80`, `c0`, etc.), NOT the sequential line number (like `1`, `2`, `3`).
-- **Replace/Delete**: `{"op":"r", "start_lid":"a4", "end_lid":"b8", "content":["new"]}`. To delete, provide an empty `content` array.
-- **Insert**: `{"op":"i", "after_lid":"c2", "content":["new"]}`. Use `_START_OF_FILE_` for `after_lid` to insert at the beginning.
-- **Context for Safety**: Always provide `context_before` and `context_after` fields to prevent line-range errors.
-
-**Rules**:
-- Line identifiers (LIDs) MUST be the fractional index strings from when the file was read.
-- The `lif_hash` for any operation MUST match the hash from when the file was last read or edited.
-
-**Example**:
-Suppose `read_file` returns:
-```
-File: a.rs | Hash: h1 | Lines: 1-3/3
-1    20: // File a
-2    40: fn main() {}
-3    60: // end
-```
-And `read_file` on `b.rs` returns:
-```
-File: b.rs | Hash: h2 | Lines: 1-1/1
-1    10: // File b
-```
-To move `fn main() {}` from `a.rs` to `b.rs` and add `use b;` to `a.rs`, you would call `edit_file` like this:
-`{"moves":[{"source_file_path":"a.rs","source_lif_hash":"h1","source_start_lid":"40","source_end_lid":"40","dest_file_path":"b.rs","dest_lif_hash":"h2","dest_after_lid":"10"}],"edits":[{"file_path":"a.rs","lif_hash":"h1","patch":[{"op":"i","after_lid":"20","context_before":"// File a","content":["use b;"],"context_after":"fn main() {}"}]}]}`
-"#
+**Operations**:
+- `inserts`: Adds new lines. Position can be `start_of_file`, `end_of_file`, or `after_anchor`.
+- `replaces`: Replaces a range of lines. To delete, provide an empty `new_content` array.
+- `moves` / `copies`: Transfers blocks of lines. Prefer `move` over `copy` + `delete`."#
                     .to_string(),
             ),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "edits": {
-                        "type": "array",
-                        "description": "An array of patch operations to apply to existing files.",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "file_path": {
-                                    "type": "string",
-                                    "description": "The relative path to the file to be patched."
-                                },
-                                "lif_hash": {
-                                    "type": "string",
-                                    "description": "The 8-character SHA-1 hash of the file state that this patch applies to. Must match the hash from when the file was last read."
-                                },
-                                "patch": {
-                                    "type": "array",
-                                    "description": "An array of patch operations for this specific file.",
-                                    "items": {
-                                        "type": "object",
-                                        "required": ["op", "content"],
-                                        "oneOf": [
-                                            {
-                                                "description": "Replace a range of lines, like a 'diff hunk'. This is best for updating a whole function body or other logical block.",
-                                                "properties": {
-                                                    "op": {"const": "r"},
-                                                    "start_lid": {"type": "string", "description": "The starting line identifier (LID), which is a fractional index string like '8a' or 'c4'."},
-                                                    "end_lid": {"type": "string", "description": "The ending line identifier (LID). For a single line, start_lid and end_lid are the same."},
-                                                    "content": {"type": "array", "items": {"type": "string"}, "description": "The new lines of content to replace the specified range. An empty array deletes the lines."},
-                                                    "context_before": {"type": "string", "description": "The exact content of the line immediately before start_lid. Highly recommended for safety."},
-                                                    "context_after": {"type": "string", "description": "The exact content of the line immediately after end_lid. Highly recommended for safety."}
-                                                },
-                                                "required": ["start_lid", "end_lid"]
-                                            },
-                                            {
-                                                "description": "Insert a new block of lines after a specific line. Use `_START_OF_FILE_` as the `after_lid` to insert at the top of the file.",
-                                                "properties": {
-                                                    "op": {"const": "i"},
-                                                    "after_lid": {"type": "string", "description": "The line identifier (LID) after which to insert. Use '_START_OF_FILE' to insert at the beginning."},
-                                                    "content": {"type": "array", "items": {"type": "string"}, "description": "The new lines of content to insert."},
-                                                    "context_before": {"type": "string", "description": "The exact content of the `after_lid` line. Highly recommended for safety."},
-                                                    "context_after": {"type": "string", "description": "The exact content of the line immediately after `after_lid`. Highly recommended for safety."}
-                                                },
-                                                "required": ["after_lid"]
-                                            }
-                                        ]
-                                    }
-                                }
-                            },
-                            "required": ["file_path", "lif_hash", "patch"]
-                        }
-                    },
                     "copies": {
                         "type": "array",
-                        "description": "An array of copy operations, executed after creates and before moves.",
+                        "description": "A list of copy operations to perform.",
                         "items": {
                             "type": "object",
+                            "title": "Copy Operation",
                             "properties": {
-                                "source_file_path": { "type": "string", "description": "The path of the file to copy lines from." },
-                                "source_lif_hash": { "type": "string", "description": "The lif_hash of the source file." },
-                                "source_start_lid": { "type": "string", "description": "The starting line identifier (LID) of the range to copy." },
-                                "source_end_lid": { "type": "string", "description": "The ending line identifier (LID) of the range to copy." },
-                                "dest_file_path": { "type": "string", "description": "The path of the file to copy lines to." },
-                                "dest_lif_hash": { "type": "string", "description": "The lif_hash of the destination file." },
-                                "dest_after_lid": { "type": "string", "description": "The line identifier (LID) in the destination file after which to insert. Use `_START_OF_FILE_` for the beginning." }
+                                "op": { "const": "copy" },
+                                "source_file_path": { "type": "string", "description": "Path of the file to copy lines from." },
+                                "source_start_lid": { "type": "string", "description": "LID of the first line in the source range." },
+                                "source_start_content": { "type": "string", "description": "Exact content of the source start line." },
+                                "source_end_lid": { "type": "string", "description": "LID of the last line in the source range." },
+                                "source_end_content": { "type": "string", "description": "Exact content of the source end line." },
+                                "dest_file_path": { "type": "string", "description": "Path of the file to copy lines to." },
+                                "dest_at_position": { "enum": ["start_of_file", "end_of_file", "after_anchor"], "description": "Specifies where to insert the content in the destination file." },
+                                "dest_anchor_lid": { "type": "string", "description": "The LID of the destination anchor line. Required only when 'dest_at_position' is 'after_anchor'." },
+                                "dest_anchor_content": { "type": "string", "description": "The exact content of the destination anchor line. Required only when 'dest_at_position' is 'after_anchor'." }
                             },
-                            "required": ["source_file_path", "source_lif_hash", "source_start_lid", "source_end_lid", "dest_file_path", "dest_lif_hash", "dest_after_lid"]
+                            "required": ["op", "source_file_path", "source_start_lid", "source_start_content", "source_end_lid", "source_end_content", "dest_file_path", "dest_at_position"]
                         }
                     },
                     "moves": {
+                                    "type": "array",
+                        "description": "A list of move operations to perform.",
+                                    "items": {
+                                        "type": "object",
+                            "title": "Move Operation",
+                                                "properties": {
+                                "op": { "const": "move" },
+                                "source_file_path": { "type": "string", "description": "Path of the file to move lines from." },
+                                "source_start_lid": { "type": "string", "description": "LID of the first line in the source range." },
+                                "source_start_content": { "type": "string", "description": "Exact content of the source start line." },
+                                "source_end_lid": { "type": "string", "description": "LID of the last line in the source range." },
+                                "source_end_content": { "type": "string", "description": "Exact content of the source end line." },
+                                "dest_file_path": { "type": "string", "description": "Path of the file to move lines to." },
+                                "dest_at_position": { "enum": ["start_of_file", "end_of_file", "after_anchor"], "description": "Specifies where to insert the content in the destination file." },
+                                "dest_anchor_lid": { "type": "string", "description": "The LID of the destination anchor line. Required only when 'dest_at_position' is 'after_anchor'." },
+                                "dest_anchor_content": { "type": "string", "description": "The exact content of the destination anchor line. Required only when 'dest_at_position' is 'after_anchor'." }
+                            },
+                            "required": ["op", "source_file_path", "source_start_lid", "source_start_content", "source_end_lid", "source_end_content", "dest_file_path", "dest_at_position"]
+                        }
+                    },
+                    "replaces": {
                         "type": "array",
-                        "description": "An array of move operations, executed after copies and before edits.",
+                        "description": "A list of replace operations to perform.",
                         "items": {
                             "type": "object",
+                            "title": "Replace Operation",
                             "properties": {
-                                "source_file_path": { "type": "string", "description": "The path of the file to move lines from." },
-                                "source_lif_hash": { "type": "string", "description": "The lif_hash of the source file." },
-                                "source_start_lid": { "type": "string", "description": "The starting line identifier (LID) of the range to move." },
-                                "source_end_lid": { "type": "string", "description": "The ending line identifier (LID) of the range to move." },
-                                "dest_file_path": { "type": "string", "description": "The path of the file to move lines to." },
-                                "dest_lif_hash": { "type": "string", "description": "The lif_hash of the destination file." },
-                                "dest_after_lid": { "type": "string", "description": "The line identifier (LID) in the destination file after which to insert. Use `_START_OF_FILE_` for the beginning." }
+                                "file_path": { "type": "string", "description": "The relative path to the file to be modified." },
+                                "start_lid": { "type": "string", "description": "The LID of the first line in the range to replace." },
+                                "start_content": { "type": "string", "description": "The exact content of the starting line." },
+                                "end_lid": { "type": "string", "description": "The LID of the last line in the range to replace. For a single line, this is the same as 'start_lid'." },
+                                "end_content": { "type": "string", "description": "The exact content of the ending line." },
+                                "new_content": { "type": "array", "items": { "type": "string" }, "description": "The new lines to replace the old range with. Use an empty array to delete." }
                             },
-                            "required": ["source_file_path", "source_lif_hash", "source_start_lid", "source_end_lid", "dest_file_path", "dest_lif_hash", "dest_after_lid"]
+                            "required": ["file_path", "start_lid", "start_content", "end_lid", "end_content", "new_content"]
+                        }
+                    },
+                    "inserts": {
+                        "type": "array",
+                        "description": "A list of insert operations to perform.",
+                        "items": {
+                            "type": "object",
+                            "title": "Insert Operation",
+                            "properties": {
+                                "file_path": { "type": "string", "description": "The relative path to the file to be modified." },
+                                "new_content": { "type": "array", "items": { "type": "string" }, "description": "The new lines of content to insert." },
+                                "at_position": { "enum": ["start_of_file", "end_of_file", "after_anchor"], "description": "Specifies where to insert the content." },
+                                "anchor_lid": { "type": "string", "description": "The LID of the anchor line. Required only when 'at_position' is 'after_anchor'." },
+                                "anchor_content": { "type": "string", "description": "The exact content of the anchor line. Required only when 'at_position' is 'after_anchor'." }
+                            },
+                            "required": ["file_path", "new_content", "at_position"]
                         }
                     }
                 },
@@ -248,349 +188,189 @@ To move `fn main() {}` from `a.rs` to `b.rs` and add `use b;` to `a.rs`, you wou
     }
 }
 
-/// Normalizes a string by collapsing and removing all whitespace.
-pub(crate) fn normalize_whitespace(s: &str) -> String {
-    s.split_whitespace().collect()
-}
-
-/// Verifies that the optional context lines in a patch operation match the actual file state.
-pub(crate) fn verify_patch_context(
-    operation: &PatchOperation,
+/// Validates a line anchor against the current file state.
+/// Checks that a line with the given LID exists and its content matches byte-for-byte.
+fn validate_anchor(
     file_state: &FileState,
+    lid_str: &str,
+    expected_content: &str,
+    op_name: &str,
+    anchor_name: &str,
 ) -> Result<()> {
-    match operation {
-        PatchOperation::Insert(op) => {
-            if let Some(ref provided_context_before) = op.context_before {
-                if op.after_lid != "_START_OF_FILE_" {
-                    let expected_content = provided_context_before;
-                    let after_lid_key = FileState::parse_index(&op.after_lid)?;
-                    match file_state.lines.get(&after_lid_key) {
-                        Some(actual_line) => {
-                            if normalize_whitespace(actual_line)
-                                != normalize_whitespace(expected_content)
-                            {
-                                return Err(anyhow!(
-                                    "ContextBefore mismatch for insert after {}. AI provided '{}', but file has '{}'. (Whitespace-insensitive comparison failed)",
-                                    op.after_lid,
-                                    provided_context_before.trim(),
-                                    actual_line.trim(),
-                                ));
-                            }
-                        }
-                        None => {
-                            return Err(anyhow!(
-                                "LID '{}' for contextBefore not found.",
-                                op.after_lid
-                            ));
-                        }
-                    }
-                }
-            }
-            if let Some(ref provided_context_after) = op.context_after {
-                let expected_content = provided_context_after;
-                let after_lid_key = if op.after_lid == "_START_OF_FILE_" {
-                    None
-                } else {
-                    Some(FileState::parse_index(&op.after_lid)?)
-                };
-
-                let mut next_item_query = file_state.lines.range((
-                    after_lid_key
-                        .as_ref()
-                        .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded),
-                    std::ops::Bound::Unbounded,
+    let lid = FileState::parse_index(lid_str)?;
+    match file_state.lines.get(&lid) {
+        Some(actual_content) => {
+            if actual_content != expected_content {
+                return Err(anyhow!(
+                    "Validation failed for '{op_name}': {anchor_name} content mismatch for LID '{lid_str}'. Expected '{expected_content}', found '{actual_content}'."
                 ));
-
-                match next_item_query.next() {
-                    Some((lid, actual_line)) => {
-                        if normalize_whitespace(actual_line)
-                            != normalize_whitespace(expected_content)
-                        {
-                            return Err(anyhow!(
-                                "ContextAfter mismatch for insert after {}. AI provided '{}', but file has '{}' at index {}. (Whitespace-insensitive comparison failed)",
-                                op.after_lid,
-                                provided_context_after.trim(),
-                                actual_line.trim(),
-                                lid.to_string()
-                            ));
-                        }
-                    }
-                    None => {
-                        if !expected_content.is_empty() {
-                            // If we expect empty context at EOF, it's fine.
-                            return Err(anyhow!(
-                                "ContextAfter mismatch: AI provided '{}' but found end of file.",
-                                provided_context_after
-                            ));
-                        }
-                    }
-                }
             }
         }
-        PatchOperation::Replace(op) => {
-            let start_lid_key = FileState::parse_index(&op.start_lid)?;
-            if let Some(ref provided_context_before) = op.context_before {
-                let expected_content = provided_context_before;
-                match file_state.lines.range(..start_lid_key).next_back() {
-                    Some((lid, actual_line)) => {
-                        if normalize_whitespace(actual_line)
-                            != normalize_whitespace(expected_content)
-                        {
-                            return Err(anyhow!(
-                                "ContextBefore mismatch at {}. AI provided '{}', but file has '{}' at index {}. (Whitespace-insensitive comparison failed)",
-                                op.start_lid,
-                                provided_context_before.trim(),
-                                actual_line.trim(),
-                                lid.to_string()
-                            ));
-                        }
-                    }
-                    None => {
-                        if !expected_content.is_empty() {
-                            return Err(anyhow!(
-                                "ContextBefore mismatch: AI provided '{}' but found start of file.",
-                                provided_context_before
-                            ));
-                        }
-                    }
-                }
-            }
-            let end_lid_key = FileState::parse_index(&op.end_lid)?;
-            if let Some(ref provided_context_after) = op.context_after {
-                let expected_content = provided_context_after;
-                match file_state.lines.range(end_lid_key..).nth(1) {
-                    Some((lid, actual_line)) => {
-                        if normalize_whitespace(actual_line)
-                            != normalize_whitespace(expected_content)
-                        {
-                            return Err(anyhow!(
-                                "ContextAfter mismatch at {}. AI provided '{}', but file has '{}' at index {}. (Whitespace-insensitive comparison failed)",
-                                op.end_lid,
-                                provided_context_after.trim(),
-                                actual_line.trim(),
-                                lid.to_string()
-                            ));
-                        }
-                    }
-                    None => {
-                        if !expected_content.is_empty() {
-                            return Err(anyhow!(
-                                "ContextAfter mismatch: AI provided '{}' but found end of file.",
-                                provided_context_after
-                            ));
-                        }
-                    }
-                }
-            }
+        None => {
+            return Err(anyhow!(
+                "Validation failed for '{op_name}': {anchor_name} LID '{lid_str}' not found in file '{}'.",
+                file_state.path.display()
+            ));
         }
     }
     Ok(())
 }
 
+/// The main execution function for the `edit_file` tool.
 pub fn execute_file_operations(
-    args: &FileOperationArgs,
+    args: &TopLevelRequest,
     file_state_manager: &mut FileStateManager,
     accessible_paths: &[String],
 ) -> Result<String> {
     let mut results = Vec::new();
 
-    if args.edits.is_empty() && args.copies.is_empty() && args.moves.is_empty() {
+    if args.inserts.is_empty()
+        && args.replaces.is_empty()
+        && args.moves.is_empty()
+        && args.copies.is_empty()
+    {
         return Ok("No file operations provided in the tool call.".to_string());
     }
 
-    // A map from a canonical file path to its planned initial hash and operations.
-    let mut planned_patches: HashMap<PathBuf, (String, Vec<PatchOperation>)> = HashMap::new();
+    // A map from a canonical file path to its planned operations.
+    let mut planned_ops: HashMap<PathBuf, Vec<PatchOperation>> = HashMap::new();
 
-    // Helper to add an operation to the plan. It canonicalizes the path and ensures
-    // that all operations for a given file are based on the same initial lif_hash.
-    fn add_op_to_plan(
-        plan: &mut HashMap<PathBuf, (String, Vec<PatchOperation>)>,
-        file_path_str: &str,
-        lif_hash: &str,
-        op: PatchOperation,
-    ) -> Result<()> {
-        let path = PathBuf::from(file_path_str);
-        let canonical_path = path.canonicalize().map_err(|e| {
-            anyhow!(
-                "Failed to canonicalize path '{}': {}. File might not exist.",
-                file_path_str,
-                e
-            )
-        })?;
+    // --- Phase 1: Plan and Validate all operations ---
+    // The order here is fixed and documented for the LLM: copies, moves, replaces, inserts.
+    let planning_result: Result<()> = (|| {
+        // Plan Copies and Moves
+        for req in args.copies.iter().chain(args.moves.iter()) {
+            let op_name = &req.op;
+            permissions::is_path_accessible(Path::new(&req.source_file_path), accessible_paths)?;
+            permissions::is_path_accessible(Path::new(&req.dest_file_path), accessible_paths)?;
 
-        let (expected_hash, ops) = plan
-            .entry(canonical_path)
-            .or_insert_with(|| (lif_hash.to_string(), Vec::new()));
-
-        if expected_hash != lif_hash {
-            return Err(anyhow!(
-                "Inconsistent lif_hash provided for file '{}'. Expected '{}' but got '{}'. All operations for a single file must use the same initial hash.",
-                file_path_str,
-                expected_hash,
-                lif_hash
-            ));
-        }
-        ops.push(op);
-        Ok(())
-    }
-
-    // --- Phase 1: Plan all operations ---
-    // The logic inside this block tries to handle errors gracefully by adding them
-    // to the `results` vector, allowing other, valid operations to proceed.
-    let planning_result: Result<()> = {
-        // --- Plan Copies ---
-        for (i, copy) in args.copies.iter().enumerate() {
-            let mut plan_copy = || {
-                permissions::is_path_accessible(
-                    Path::new(&copy.source_file_path),
-                    accessible_paths,
+            let (source_path, content_to_transfer) = {
+                let source_state = file_state_manager.open_file(&req.source_file_path)?;
+                validate_anchor(
+                    source_state,
+                    &req.source_start_lid,
+                    &req.source_start_content,
+                    op_name,
+                    "source_start_anchor",
                 )?;
-                permissions::is_path_accessible(Path::new(&copy.dest_file_path), accessible_paths)?;
-
-                let source_state = file_state_manager.open_file(&copy.source_file_path)?;
-                if source_state.get_short_hash() != copy.source_lif_hash {
-                    return Err(anyhow!(
-                        "Source hash mismatch for copy. Expected '{}', found '{}'.",
-                        copy.source_lif_hash,
-                        source_state.get_short_hash()
-                    ));
-                }
-
-                let content_to_copy = source_state
-                    .get_lines_in_range(&copy.source_start_lid, &copy.source_end_lid)?;
-
-                let insert_op = PatchOperation::Insert(crate::patch::InsertOperation {
-                    after_lid: copy.dest_after_lid.clone(),
-                    content: content_to_copy,
-                    context_before: None,
-                    context_after: None,
-                });
-
-                add_op_to_plan(
-                    &mut planned_patches,
-                    &copy.dest_file_path,
-                    &copy.dest_lif_hash,
-                    insert_op,
-                )
+                validate_anchor(
+                    source_state,
+                    &req.source_end_lid,
+                    &req.source_end_content,
+                    op_name,
+                    "source_end_anchor",
+                )?;
+                let content =
+                    source_state.get_lines_in_range(&req.source_start_lid, &req.source_end_lid)?;
+                (source_state.path.clone(), content)
             };
-            if let Err(e) = plan_copy() {
-                results.push(format!("Error planning copy operation #{i}: {e}"));
-            }
-        }
 
-        // --- Plan Moves ---
-        for (i, mov) in args.moves.iter().enumerate() {
-            let mut plan_move = || {
-                permissions::is_path_accessible(
-                    Path::new(&mov.source_file_path),
-                    accessible_paths,
-                )?;
-                permissions::is_path_accessible(Path::new(&mov.dest_file_path), accessible_paths)?;
-
-                let source_state = file_state_manager.open_file(&mov.source_file_path)?;
-                if source_state.get_short_hash() != mov.source_lif_hash {
-                    return Err(anyhow!(
-                        "Source hash mismatch for move. Expected '{}', found '{}'.",
-                        mov.source_lif_hash,
-                        source_state.get_short_hash()
-                    ));
+            let dest_state = file_state_manager.open_file(&req.dest_file_path)?;
+            let after_lid = match req.dest_at_position {
+                Position::StartOfFile => None,
+                Position::EndOfFile => dest_state.lines.last_key_value().map(|(k, _)| k.clone()),
+                Position::AfterAnchor => {
+                    let lid_str = req.dest_anchor_lid.as_deref().ok_or_else(|| {
+                        anyhow!("`dest_anchor_lid` is required for `after_anchor` position.")
+                    })?;
+                    let content = req.dest_anchor_content.as_deref().ok_or_else(|| {
+                        anyhow!("`dest_anchor_content` is required for `after_anchor` position.")
+                    })?;
+                    validate_anchor(dest_state, lid_str, content, op_name, "dest_anchor")?;
+                    Some(FileState::parse_index(lid_str)?)
                 }
+            };
 
-                let content_to_move =
-                    source_state.get_lines_in_range(&mov.source_start_lid, &mov.source_end_lid)?;
-
-                let delete_op = PatchOperation::Replace(ReplaceOperation {
-                    start_lid: mov.source_start_lid.clone(),
-                    end_lid: mov.source_end_lid.clone(),
+            if req.op == "move" {
+                let delete_op = PatchOperation::Replace(ReplaceOp {
+                    start_lid: FileState::parse_index(&req.source_start_lid)?,
+                    end_lid: FileState::parse_index(&req.source_end_lid)?,
                     content: vec![],
-                    context_before: None,
-                    context_after: None,
                 });
-                add_op_to_plan(
-                    &mut planned_patches,
-                    &mov.source_file_path,
-                    &mov.source_lif_hash,
-                    delete_op,
-                )?;
-
-                let insert_op = PatchOperation::Insert(crate::patch::InsertOperation {
-                    after_lid: mov.dest_after_lid.clone(),
-                    content: content_to_move,
-                    context_before: None,
-                    context_after: None,
-                });
-                add_op_to_plan(
-                    &mut planned_patches,
-                    &mov.dest_file_path,
-                    &mov.dest_lif_hash,
-                    insert_op,
-                )
-            };
-
-            if let Err(e) = plan_move() {
-                results.push(format!("Error planning move operation #{i}: {e}"));
+                planned_ops.entry(source_path).or_default().push(delete_op);
             }
+
+            let insert_op = PatchOperation::Insert(InsertOp {
+                after_lid,
+                content: content_to_transfer,
+            });
+            planned_ops
+                .entry(dest_state.path.clone())
+                .or_default()
+                .push(insert_op);
         }
 
-        // --- Plan Edits ---
-        for edit in &args.edits {
-            let file_path_str = &edit.file_path;
-            let mut plan_edit = || -> Result<()> {
-                permissions::is_path_accessible(Path::new(file_path_str), accessible_paths)?;
+        // Plan Replaces
+        for req in &args.replaces {
+            permissions::is_path_accessible(Path::new(&req.file_path), accessible_paths)?;
+            let file_state = file_state_manager.open_file(&req.file_path)?;
+            validate_anchor(
+                file_state,
+                &req.start_lid,
+                &req.start_content,
+                "replace",
+                "start_anchor",
+            )?;
+            validate_anchor(
+                file_state,
+                &req.end_lid,
+                &req.end_content,
+                "replace",
+                "end_anchor",
+            )?;
 
-                // For edits, we can do a preliminary hash check during planning
-                // because all ops in a single `PatchArgs` use the same hash.
-                let file_state = file_state_manager.open_file(file_path_str)?;
-                if file_state.get_short_hash() != edit.lif_hash {
-                    return Err(anyhow!(
-                        "Hash mismatch. Expected '{}', found '{}'.",
-                        edit.lif_hash,
-                        file_state.get_short_hash()
-                    ));
-                }
-
-                for op in &edit.patch {
-                    add_op_to_plan(
-                        &mut planned_patches,
-                        file_path_str,
-                        &edit.lif_hash,
-                        op.clone(),
-                    )?;
-                }
-                Ok(())
-            };
-            if let Err(e) = plan_edit() {
-                results.push(format!("File: {file_path_str}\nError: {e}"));
-            }
+            let internal_op = PatchOperation::Replace(ReplaceOp {
+                start_lid: FileState::parse_index(&req.start_lid)?,
+                end_lid: FileState::parse_index(&req.end_lid)?,
+                content: req.new_content.clone(),
+            });
+            planned_ops
+                .entry(file_state.path.clone())
+                .or_default()
+                .push(internal_op);
         }
+
+        // Plan Inserts
+        for req in &args.inserts {
+            permissions::is_path_accessible(Path::new(&req.file_path), accessible_paths)?;
+            let file_state = file_state_manager.open_file(&req.file_path)?;
+
+            let after_lid = match req.at_position {
+                Position::StartOfFile => None,
+                Position::EndOfFile => file_state.lines.last_key_value().map(|(k, _)| k.clone()),
+                Position::AfterAnchor => {
+                    let lid_str = req.anchor_lid.as_deref().ok_or_else(|| {
+                        anyhow!("`anchor_lid` is required for `after_anchor` position.")
+                    })?;
+                    let content = req.anchor_content.as_deref().ok_or_else(|| {
+                        anyhow!("`anchor_content` is required for `after_anchor` position.")
+                    })?;
+                    validate_anchor(file_state, lid_str, content, "insert", "anchor")?;
+                    Some(FileState::parse_index(lid_str)?)
+                }
+            };
+
+            let internal_op = PatchOperation::Insert(InsertOp {
+                after_lid,
+                content: req.new_content.clone(),
+            });
+            planned_ops
+                .entry(file_state.path.clone())
+                .or_default()
+                .push(internal_op);
+        }
+
         Ok(())
-    };
+    })();
 
-    if let Err(e) = planning_result {
-        results.push(format!("A fatal error occurred during planning: {e}"));
-        return Ok(results.join("\n\n---\n\n"));
-    }
+    planning_result?;
 
     // --- Phase 2: Execute the consolidated plan ---
-    for (path, (initial_hash, operations)) in planned_patches {
+    for (path, operations) in planned_ops {
         let file_path_str = path.to_string_lossy();
-        let result = (|| {
-            let file_state = file_state_manager.open_file(&file_path_str)?;
-
-            // Final, single hash check for the entire file operation batch
-            if file_state.get_short_hash() != initial_hash {
-                return Err(anyhow!(
-                    "Hash mismatch for '{}'. Expected '{}', found '{}'. The file was modified externally.",
-                    file_path_str,
-                    initial_hash,
-                    file_state.get_short_hash()
-                ));
-            }
-
-            // Verify context for all planned operations before applying any
-            for op in &operations {
-                verify_patch_context(op, file_state)?;
-            }
+        let result: Result<String> = (|| {
+            let file_state = file_state_manager.get_file_state_mut(&file_path_str)?;
+            let initial_hash = file_state.get_short_hash().to_string();
 
             // Apply all patches for this file at once
             let diff = file_state.apply_and_write_patch(&operations)?;

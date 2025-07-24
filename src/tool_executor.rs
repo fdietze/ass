@@ -1,11 +1,5 @@
 use crate::{
-    config::Config,
-    file_creator::{CreateFileArgs, execute_create_files},
-    file_editor::{FileOperationArgs, execute_file_operations},
-    file_reader::{FileReadArgs, execute_read_file},
-    file_state_manager::FileStateManager,
-    list_files::{ListFilesArgs, execute_list_files},
-    shell::{ShellCommandArgs, execute_shell_command},
+    config::Config, file_creator, file_editor, file_reader, file_state_manager, list_files, shell,
 };
 use anyhow::Result;
 use console::style;
@@ -17,18 +11,19 @@ use strip_ansi_escapes::strip_str;
 pub async fn handle_tool_call(
     tool_call: &ToolCall,
     config: &Config,
-    file_state_manager: Arc<Mutex<FileStateManager>>,
+    file_state_manager: Arc<Mutex<file_state_manager::FileStateManager>>,
 ) -> Result<Message> {
     let function_name = &tool_call.function_call.name;
 
     let tool_call_id = Some(tool_call.id.clone());
     match function_name.as_str() {
         "execute_shell_command" => {
-            let result = match serde_json::from_str::<ShellCommandArgs>(
+            let result = match serde_json::from_str::<shell::ShellCommandArgs>(
                 &tool_call.function_call.arguments,
             ) {
                 Ok(args) => {
-                    execute_shell_command(&args.command, &config.allowed_command_prefixes).await
+                    shell::execute_shell_command(&args.command, &config.allowed_command_prefixes)
+                        .await
                 }
                 Err(e) => Err(anyhow::anyhow!(
                     "Error: Invalid arguments provided for {function_name}: {e}"
@@ -53,15 +48,15 @@ pub async fn handle_tool_call(
             })
         }
         "create_file" => {
-            let args_result =
-                serde_json::from_str::<CreateFileArgs>(&tool_call.function_call.arguments);
-            let result = match args_result {
+            let result = match serde_json::from_str::<file_creator::CreateFileArgs>(
+                &tool_call.function_call.arguments,
+            ) {
                 Ok(args) => {
                     let accessible_paths = config.accessible_paths.clone();
                     let manager_clone = Arc::clone(&file_state_manager);
                     tokio::task::spawn_blocking(move || {
                         let mut manager = manager_clone.lock().unwrap();
-                        execute_create_files(&args, &mut manager, &accessible_paths)
+                        file_creator::execute_create_files(&args, &mut manager, &accessible_paths)
                     })
                     .await?
                 }
@@ -88,15 +83,15 @@ pub async fn handle_tool_call(
             })
         }
         "edit_file" => {
-            let args_result =
-                serde_json::from_str::<FileOperationArgs>(&tool_call.function_call.arguments);
-            let result = match args_result {
+            let result = match serde_json::from_str::<file_editor::TopLevelRequest>(
+                &tool_call.function_call.arguments,
+            ) {
                 Ok(args) => {
                     let accessible_paths = config.accessible_paths.clone();
                     let manager_clone = Arc::clone(&file_state_manager);
                     tokio::task::spawn_blocking(move || {
                         let mut manager = manager_clone.lock().unwrap();
-                        execute_file_operations(&args, &mut manager, &accessible_paths)
+                        file_editor::execute_file_operations(&args, &mut manager, &accessible_paths)
                     })
                     .await?
                 }
@@ -122,15 +117,15 @@ pub async fn handle_tool_call(
             })
         }
         "read_file" => {
-            let args_result =
-                serde_json::from_str::<FileReadArgs>(&tool_call.function_call.arguments);
-            let result = match args_result {
+            let result = match serde_json::from_str::<file_reader::FileReadArgs>(
+                &tool_call.function_call.arguments,
+            ) {
                 Ok(args) => {
                     let config_clone = config.clone();
                     let manager_clone = Arc::clone(&file_state_manager);
                     tokio::task::spawn_blocking(move || {
                         let mut manager = manager_clone.lock().unwrap();
-                        execute_read_file(&args, &config_clone, &mut manager)
+                        file_reader::execute_read_file(&args, &config_clone, &mut manager)
                     })
                     .await?
                 }
@@ -157,19 +152,20 @@ pub async fn handle_tool_call(
             })
         }
         "list_files" => {
-            let result =
-                match serde_json::from_str::<ListFilesArgs>(&tool_call.function_call.arguments) {
-                    Ok(args) => {
-                        let config_clone = config.clone();
-                        tokio::task::spawn_blocking(move || {
-                            execute_list_files(&args, &config_clone)
-                        })
-                        .await?
-                    }
-                    Err(e) => Err(anyhow::anyhow!(
-                        "Error: Invalid arguments provided for {function_name}: {e}"
-                    )),
-                };
+            let result = match serde_json::from_str::<list_files::ListFilesArgs>(
+                &tool_call.function_call.arguments,
+            ) {
+                Ok(args) => {
+                    let config_clone = config.clone();
+                    tokio::task::spawn_blocking(move || {
+                        list_files::execute_list_files(&args, &config_clone)
+                    })
+                    .await?
+                }
+                Err(e) => Err(anyhow::anyhow!(
+                    "Error: Invalid arguments provided for {function_name}: {e}"
+                )),
+            };
 
             let (colored_output, uncolored_output) = match result {
                 Ok(output) => (output.clone(), strip_str(&output)),

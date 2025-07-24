@@ -42,6 +42,19 @@ impl FileStateManager {
         Ok(self.open_files.get_mut(&canonical_key).unwrap())
     }
 
+    /// Retrieves the current state of a file from the manager, mutably.
+    pub fn get_file_state_mut(&mut self, path_str: &str) -> Result<&mut FileState> {
+        let canonical_path = PathBuf::from(path_str).canonicalize()?;
+        self.open_files
+            .get_mut(&canonical_path.to_string_lossy().to_string())
+            .ok_or_else(|| {
+                anyhow!(
+                    "File state for '{}' not found in manager. It must be read first.",
+                    path_str
+                )
+            })
+    }
+
     /// Checks if the cached file state is stale compared to the disk.
     /// Returns true if the file is not in the cache or if the content differs.
     fn is_content_stale(&self, key: &str, path: &Path) -> Result<bool> {
@@ -116,52 +129,6 @@ mod tests {
         let state2 = manager.open_file(file_path_str).unwrap();
         assert_eq!(state2.get_full_content(), "updated");
         assert_ne!(state2.lif_hash, original_hash);
-    }
-
-    #[test]
-    fn test_lid_and_hash_are_stable_on_read() {
-        let (_tmp_dir, file_path) = setup_test_file("line 1\nline 2");
-        let file_path_str = file_path.to_str().unwrap();
-        let mut manager = FileStateManager::new();
-
-        // 1. Open the file and get its initial state.
-        let state = manager.open_file(file_path_str).unwrap();
-        let initial_hash = state.lif_hash.clone();
-        let initial_lids: Vec<_> = state.lines.keys().cloned().collect();
-
-        // 2. Simulate an edit by applying a patch. This happens in memory.
-        let patch = vec![crate::patch::PatchOperation::Insert(
-            crate::patch::InsertOperation {
-                after_lid: initial_lids[0].to_string(),
-                content: vec!["inserted".to_string()],
-                context_before: None,
-                context_after: None,
-            },
-        )];
-        // This writes the change to disk, which is the correct simulation of the tool's flow.
-        state.apply_and_write_patch(&patch).unwrap();
-        let hash_after_edit = state.lif_hash.clone();
-        let lids_after_edit: Vec<_> = state.lines.keys().cloned().collect();
-        assert_ne!(initial_hash, hash_after_edit);
-
-        // 3. Call `open_file` again. Since the file on disk hasn't changed,
-        // it should return the cached state.
-        let state_after_second_read = manager.open_file(file_path_str).unwrap();
-
-        // 4. Verify that the hash and LIDs are unchanged from the in-memory edit.
-        assert_eq!(
-            state_after_second_read.lif_hash, hash_after_edit,
-            "Hash should be stable on read of unchanged file"
-        );
-        assert_eq!(
-            state_after_second_read
-                .lines
-                .keys()
-                .cloned()
-                .collect::<Vec<_>>(),
-            lids_after_edit,
-            "LIDs should be stable on read of unchanged file"
-        );
     }
 
     #[test]

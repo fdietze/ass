@@ -83,7 +83,7 @@ impl FileState {
         initial_state
     }
 
-    /// Applies a series of patch operations to the file state.
+    /// Applies a series of pre-validated, internal patch operations to the file state.
     ///
     /// ### Reasoning
     /// This method is transactional within a single patch request. It operates on a clone
@@ -97,25 +97,19 @@ impl FileState {
         for operation in patch {
             match operation {
                 PatchOperation::Insert(op) => {
-                    let after_index = if op.after_lid == "_START_OF_FILE_" {
-                        None
-                    } else {
-                        Some(Self::parse_index(&op.after_lid)?)
-                    };
+                    // `op.after_lid` is an `Option<FractionalIndex>`, `None` means start-of-file.
+                    let after_index = op.after_lid.as_ref();
 
                     let next_index = temp_lines
                         .range((
                             after_index
-                                .as_ref()
-                                .map_or(std::ops::Bound::Unbounded, |k| {
-                                    std::ops::Bound::Excluded(k)
-                                }),
+                                .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded),
                             std::ops::Bound::Unbounded,
                         ))
                         .next()
                         .map(|(k, _)| k.clone());
 
-                    let mut last_gen_index = after_index;
+                    let mut last_gen_index = after_index.cloned();
                     for line_content in op.content.iter() {
                         let new_index =
                             FractionalIndex::new(last_gen_index.as_ref(), next_index.as_ref())
@@ -125,34 +119,36 @@ impl FileState {
                     }
                 }
                 PatchOperation::Replace(op) => {
-                    let start_index = Self::parse_index(&op.start_lid)?;
-                    let end_index = Self::parse_index(&op.end_lid)?;
+                    // The LIDs are already validated `FractionalIndex` instances.
+                    let start_index = &op.start_lid;
+                    let end_index = &op.end_lid;
 
-                    if !temp_lines.contains_key(&start_index) {
+                    // Basic sanity checks. Deeper validation happens in file_editor.
+                    if !temp_lines.contains_key(start_index) {
                         return Err(anyhow!(
-                            "start_lid '{}' does not exist in file",
-                            op.start_lid
+                            "start_lid '{:?}' does not exist in file",
+                            start_index
                         ));
                     }
-                    if !temp_lines.contains_key(&end_index) {
-                        return Err(anyhow!("end_lid '{}' does not exist in file", op.end_lid));
+                    if !temp_lines.contains_key(end_index) {
+                        return Err(anyhow!("end_lid '{:?}' does not exist in file", end_index));
                     }
                     if start_index > end_index {
                         return Err(anyhow!(
-                            "start_lid '{}' cannot be numerically greater than end_lid '{}'",
-                            op.start_lid,
-                            op.end_lid
+                            "start_lid '{:?}' cannot be numerically greater than end_lid '{:?}'",
+                            start_index,
+                            end_index
                         ));
                     }
 
                     // Keys to remove
-                    temp_lines.retain(|k, _| k < &start_index || k > &end_index);
+                    temp_lines.retain(|k, _| k < start_index || k > end_index);
 
                     let after_index_for_insert =
-                        temp_lines.range(..&start_index).next_back().map(|(k, _)| k);
+                        temp_lines.range(..start_index).next_back().map(|(k, _)| k);
 
                     let next_index_for_insert = temp_lines
-                        .range(&start_index..)
+                        .range(start_index..)
                         .next()
                         .map(|(k, _)| k.clone());
 
@@ -173,8 +169,7 @@ impl FileState {
         self.lines = temp_lines;
 
         // After modifying the lines, we need to update the `ends_with_newline` flag
-        // before we recalculate the hash. This is the fix: reconstruct the content
-        // and check it directly, rather than using a flawed heuristic.
+        // before we recalculate the hash.
         let full_content = self.get_full_content();
         self.ends_with_newline = full_content.ends_with('\n');
 
@@ -363,7 +358,7 @@ impl FileState {
         let mut content = self
             .lines
             .iter()
-            .map(|(index, content)| format!("{}: {}", index.to_string(), content))
+            .map(|(index, content)| format!("{index:?}: {content}"))
             .collect::<Vec<String>>()
             .join("\n");
         if self.ends_with_newline {
