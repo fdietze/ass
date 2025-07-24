@@ -185,8 +185,10 @@ impl App {
                     for tool_call in tool_calls {
                         let function_name = &tool_call.function_call.name;
                         println!("[{}]", style(format!("tool: {function_name}")).magenta());
-                        let pretty_args = pretty_print_json(&tool_call.function_call.arguments);
-                        println!("{pretty_args}");
+                        if self.config.show_tool_call_args {
+                            let pretty_args = pretty_print_json(&tool_call.function_call.arguments);
+                            println!("{pretty_args}");
+                        }
                     }
 
                     print!(

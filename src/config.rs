@@ -51,6 +51,10 @@ pub struct ConfigLayer {
     /// Show the system prompt before starting the conversation.
     #[arg(long)]
     pub show_system_prompt: Option<bool>,
+
+    /// Show detailed arguments in tool call confirmations.
+    #[arg(long)]
+    pub show_tool_call_args: Option<bool>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -66,6 +70,7 @@ pub struct Config {
     pub accessible_paths: Vec<String>,
     pub terminal_bell: bool,
     pub show_system_prompt: bool,
+    pub show_tool_call_args: bool,
 }
 
 impl Config {
@@ -102,6 +107,9 @@ impl Config {
         if let Some(show_system_prompt) = layer.show_system_prompt {
             self.show_system_prompt = show_system_prompt;
         }
+        if let Some(show_tool_call_args) = layer.show_tool_call_args {
+            self.show_tool_call_args = show_tool_call_args;
+        }
     }
 }
 
@@ -123,6 +131,7 @@ impl Default for Config {
             accessible_paths: vec![".".to_string()],
             terminal_bell: true,
             show_system_prompt: false,
+            show_tool_call_args: false,
         }
     }
 }
