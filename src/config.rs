@@ -55,6 +55,10 @@ pub struct ConfigLayer {
     /// Show detailed arguments in tool call confirmations.
     #[arg(long)]
     pub show_tool_call_args: Option<bool>,
+
+    /// Print API messages before sending them.
+    #[arg(long)]
+    pub print_messages: Option<bool>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -71,6 +75,7 @@ pub struct Config {
     pub terminal_bell: bool,
     pub show_system_prompt: bool,
     pub show_tool_call_args: bool,
+    pub print_messages: bool,
 }
 
 impl Config {
@@ -110,6 +115,9 @@ impl Config {
         if let Some(show_tool_call_args) = layer.show_tool_call_args {
             self.show_tool_call_args = show_tool_call_args;
         }
+        if let Some(print_messages) = layer.print_messages {
+            self.print_messages = print_messages;
+        }
     }
 }
 
@@ -132,6 +140,7 @@ impl Default for Config {
             terminal_bell: true,
             show_system_prompt: false,
             show_tool_call_args: false,
+            print_messages: false,
         }
     }
 }

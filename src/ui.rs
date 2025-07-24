@@ -278,6 +278,18 @@ impl App {
             transforms: None,
         };
 
+        // Print messages before sending to API if configured
+        if self.config.print_messages {
+            println!();
+            println!("{}", style("Messages being sent to API:").yellow().bold());
+            for message in &self.messages {
+                let message_json = serde_json::to_string_pretty(message)
+                    .unwrap_or_else(|e| format!("Failed to serialize message: {e}"));
+                println!("{message_json}");
+            }
+            println!();
+        }
+
         let client = Arc::clone(&self.client);
         let handle = tokio::spawn(async move {
             streaming_executor::stream_and_collect_response(&client, request).await
