@@ -32,8 +32,10 @@ mod tests {
                         "file_path": "{file_path}",
                         "new_content": ["line 2"],
                         "at_position": "after_anchor",
-                        "anchor_lid": "{lid_line_1}",
-                        "anchor_content": "line 1"
+                        "anchor": {{
+                            "lid": "{lid_line_1}",
+                            "line_content": "line 1"
+                        }}
                     }}
                 ]
             }}"#
@@ -63,8 +65,10 @@ mod tests {
                         "file_path": "{file_path}",
                         "new_content": ["line 2"],
                         "at_position": "after_anchor",
-                        "anchor_lid": "{lid_line_1}",
-                        "anchor_content": "WRONG content"
+                        "anchor": {{
+                            "lid": "{lid_line_1}",
+                            "line_content": "WRONG content"
+                        }}
                     }}
                 ]
             }}"#
@@ -100,10 +104,14 @@ mod tests {
                 "replaces": [
                     {{
                         "file_path": "{}",
-                        "start_lid": "{}",
-                        "start_content": "two",
-                        "end_lid": "{}",
-                        "end_content": "two",
+                        "start_anchor": {{
+                            "lid": "{}",
+                            "line_content": "two"
+                        }},
+                        "end_anchor": {{
+                            "lid": "{}",
+                            "line_content": "two"
+                        }},
                         "new_content": ["2"]
                     }}
                 ]
@@ -133,10 +141,14 @@ mod tests {
                 "replaces": [
                     {{
                         "file_path": "{}",
-                        "start_lid": "{}",
-                        "start_content": "two",
-                        "end_lid": "{}",
-                        "end_content": "two",
+                        "start_anchor": {{
+                            "lid": "{}",
+                            "line_content": "two"
+                        }},
+                        "end_anchor": {{
+                            "lid": "{}",
+                            "line_content": "two"
+                        }},
                         "new_content": []
                     }}
                 ]
@@ -173,14 +185,20 @@ mod tests {
                     {{
                         "op": "move",
                         "source_file_path": "{}",
-                        "source_start_lid": "{}",
-                        "source_start_content": "line to move",
-                        "source_end_lid": "{}",
-                        "source_end_content": "line to move",
+                        "source_start_anchor": {{
+                            "lid": "{}",
+                            "line_content": "line to move"
+                        }},
+                        "source_end_anchor": {{
+                            "lid": "{}",
+                            "line_content": "line to move"
+                        }},
                         "dest_file_path": "{}",
                         "dest_at_position": "after_anchor",
-                        "dest_anchor_lid": "{}",
-                        "dest_anchor_content": "dest line 1"
+                        "dest_anchor": {{
+                            "lid": "{}",
+                            "line_content": "dest line 1"
+                        }}
                     }}
                 ]
             }}"#,
@@ -247,17 +265,23 @@ mod tests {
                         "file_path": "{file1_path}",
                         "new_content": ["file1 line2"],
                         "at_position": "after_anchor",
-                        "anchor_lid": "{file1_lid}",
-                        "anchor_content": "file1 line1"
+                        "anchor": {{
+                            "lid": "{file1_lid}",
+                            "line_content": "file1 line1"
+                        }}
                     }}
                 ],
                 "replaces": [
                     {{
                         "file_path": "{file2_path}",
-                        "start_lid": "any_lid",
-                        "start_content": "THIS IS WRONG",
-                        "end_lid": "any_lid",
-                        "end_content": "THIS IS WRONG",
+                        "start_anchor": {{
+                            "lid": "any_lid",
+                            "line_content": "THIS IS WRONG"
+                        }},
+                        "end_anchor": {{
+                            "lid": "any_lid",
+                            "line_content": "THIS IS WRONG"
+                        }},
                         "new_content": ["..."]
                     }}
                 ]
