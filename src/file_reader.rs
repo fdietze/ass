@@ -30,6 +30,21 @@ Reads files or line ranges.
 **Output Format**:
 Each line is prefixed with its line number and a unique Line Identifier (LID). The LID is crucial for any subsequent edits.
 
+Example tool call:
+{
+  "files": [
+    {
+      "file_path": "src/main.rs",
+      "ranges": [
+        {
+          "start_line": 183,
+          "end_line": 227
+        }
+      ]
+    }
+  ]
+}
+
 Example `read_file` output for `jokes.txt`:
 ```
 File: jokes.txt | Hash: 931d3b24 | Lines: 1-1/1

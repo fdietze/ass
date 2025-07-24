@@ -101,7 +101,7 @@ pub fn edit_file_tool_schema() -> Tool {
             name: "edit_file".to_string(),
             description: Some(
                 r#"Atomically performs a series of file editing operations using a robust anchor-based system.
-After a successful edit, this tool's output provides the new file hash. You have the latest file state; DO NOT call read_file afterward.
+After a successful edit, this tool's output provides the new file hash. You have the latest file state; DO NOT call read_file afterward. LIDs are stable across edits.
 
 All operations are planned based on the files' initial state. Line Anchors (LID + content) MUST be valid at the beginning of the tool call.
 
