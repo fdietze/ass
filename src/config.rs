@@ -47,6 +47,10 @@ pub struct ConfigLayer {
     /// Enable or disable the terminal bell.
     #[arg(long)]
     pub terminal_bell: Option<bool>,
+
+    /// Show the system prompt before starting the conversation.
+    #[arg(long)]
+    pub show_system_prompt: Option<bool>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -61,6 +65,7 @@ pub struct Config {
     pub ignored_paths: Vec<String>,
     pub accessible_paths: Vec<String>,
     pub terminal_bell: bool,
+    pub show_system_prompt: bool,
 }
 
 impl Config {
@@ -94,6 +99,9 @@ impl Config {
         if let Some(terminal_bell) = layer.terminal_bell {
             self.terminal_bell = terminal_bell;
         }
+        if let Some(show_system_prompt) = layer.show_system_prompt {
+            self.show_system_prompt = show_system_prompt;
+        }
     }
 }
 
@@ -114,6 +122,7 @@ impl Default for Config {
             ignored_paths: vec![".git".to_string()],
             accessible_paths: vec![".".to_string()],
             terminal_bell: true,
+            show_system_prompt: false,
         }
     }
 }

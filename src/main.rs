@@ -45,40 +45,42 @@ async fn main() -> Result<()> {
         prompt_builder::expand_file_mentions(&app.config.system_prompt, &app.config, &mut fsm)?
     };
 
-    println!("[{}]", style("system").blue());
-    println!("{}", app.config.system_prompt); // Print the original, un-expanded prompt
+    if app.config.show_system_prompt {
+        println!("[{}]", style("system").blue());
+        println!("{}", app.config.system_prompt); // Print the original, un-expanded prompt
 
-    // Display collapsed summary for files mentioned in the system prompt
-    let enrichments = enricher::extract_enrichments(&app.config.system_prompt);
-    if !enrichments.mentioned_files.is_empty() {
-        let expansion_result = path_expander::expand_and_validate(
-            &enrichments.mentioned_files,
-            &app.config.ignored_paths,
-        );
+        // Display collapsed summary for files mentioned in the system prompt
+        let enrichments = enricher::extract_enrichments(&app.config.system_prompt);
+        if !enrichments.mentioned_files.is_empty() {
+            let expansion_result = path_expander::expand_and_validate(
+                &enrichments.mentioned_files,
+                &app.config.ignored_paths,
+            );
 
-        let summaries: Vec<String> = expansion_result
-            .files
-            .iter()
-            .filter_map(|file_path| {
-                let mut fsm = app.file_state_manager.lock().unwrap();
-                match fsm.open_file(file_path) {
-                    Ok(file_state) => {
-                        let total_lines = file_state.lines.len();
-                        let filename = std::path::Path::new(file_path)
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy();
-                        Some(format!("[{filename} ({total_lines} lines)]"))
+            let summaries: Vec<String> = expansion_result
+                .files
+                .iter()
+                .filter_map(|file_path| {
+                    let mut fsm = app.file_state_manager.lock().unwrap();
+                    match fsm.open_file(file_path) {
+                        Ok(file_state) => {
+                            let total_lines = file_state.lines.len();
+                            let filename = std::path::Path::new(file_path)
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy();
+                            Some(format!("[{filename} ({total_lines} lines)]"))
+                        }
+                        Err(_) => None,
                     }
-                    Err(_) => None,
-                }
-            })
-            .collect();
+                })
+                .collect();
 
-        if !summaries.is_empty() {
-            println!("{}", style("Attached files:").dim());
-            for summary in summaries {
-                println!("{}", style(summary).dim());
+            if !summaries.is_empty() {
+                println!("{}", style("Attached files:").dim());
+                for summary in summaries {
+                    println!("{}", style(summary).dim());
+                }
             }
         }
     }
