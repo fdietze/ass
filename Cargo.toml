@@ -1,5 +1,5 @@
 [package]
-name = "ass"
+name = "ass"      # [ass]istant
 version = "0.1.0"
 edition = "2024"
 
