@@ -22,8 +22,8 @@ pub enum AppState {
     WaitingForUserInput,
     ProcessingPrompt(String),
     WaitingForLLM(JoinHandle<anyhow::Result<Option<Message>>>),
-    WaitingForToolConfirmation(Vec<ToolCall>),
-    ExecutingTool(JoinHandle<anyhow::Result<Message>>),
+    ConfirmingToolExecution(Vec<ToolCall>),
+    ExecutingTools(JoinHandle<anyhow::Result<Vec<Message>>>),
     Shutdown,
 }
 
@@ -94,27 +94,27 @@ impl App {
                         }
                     }
                 }
-                AppState::ExecutingTool(_) => {
+                AppState::ExecutingTools(_) => {
                     let (new_state, should_break) = tokio::select! {
                             _ = tokio::signal::ctrl_c() => {
-                                if let AppState::ExecutingTool(handle) = &mut self.state {
+                                 if let AppState::ExecutingTools(handle) = &mut self.state {
                                     println!("\n{}", style("Tool execution cancelled.").yellow());
                                     handle.abort();
                                 }
                                 (AppState::WaitingForUserInput, false)
                             }
                             result = async {
-                                if let AppState::ExecutingTool(handle) = &mut self.state {
+                                 if let AppState::ExecutingTools(handle) = &mut self.state {
                                     handle.await
                     } else {
                                     unreachable!()
                                 }
                             } => {
                                 match result {
-                                    Ok(Ok(tool_message)) => {
-                                        self.messages.push(tool_message);
-                                        (self.spawn_llm_call(), false)
-                                    }
+                                     Ok(Ok(tool_messages)) => {
+                                         self.messages.extend(tool_messages);
+                                         (self.spawn_llm_call(), false)
+                                     }
                                     Ok(Err(e)) => {
                                         eprintln!("{}", style(format!("Tool execution failed: {e}")).red());
                                         (AppState::WaitingForUserInput, false)
@@ -151,15 +151,15 @@ impl App {
                                 Ok(Ok(Some(response_message))) => {
                                     let has_tool_calls = response_message.tool_calls.is_some();
                                     self.messages.push(response_message);
-                                    if has_tool_calls {
+                                     if has_tool_calls {
                                         if let Some(tool_calls) = self.messages.last().unwrap().tool_calls.clone() {
-                                            (AppState::WaitingForToolConfirmation(tool_calls), false)
+                                            (AppState::ConfirmingToolExecution(tool_calls), false)
                                         } else {
                                             (AppState::WaitingForUserInput, false)
                                         }
-                    } else {
-                                        (AppState::WaitingForUserInput, false)
-                                    }
+                                     } else {
+                                         (AppState::WaitingForUserInput, false)
+                                     }
                                 }
                                 Ok(Ok(None)) => {
                                     (AppState::WaitingForUserInput, false)
@@ -180,8 +180,7 @@ impl App {
                         break;
                     }
                 }
-                AppState::WaitingForToolConfirmation(tool_calls) => {
-                    println!("\n{}", style("Proposed tool calls:").magenta());
+                AppState::ConfirmingToolExecution(tool_calls) => {
                     for tool_call in tool_calls {
                         let function_name = &tool_call.function_call.name;
                         println!("[{}]", style(format!("tool: {function_name}")).magenta());
@@ -205,17 +204,18 @@ impl App {
                             line_opt = self.stdin_receiver.recv() => {
                                 if let Some(_input) = line_opt.flatten() {
                                     // User pressed Enter
-                                    if let AppState::WaitingForToolConfirmation(tool_calls) = &self.state {
-                                        if let Some(first_tool_call) = tool_calls.first().cloned() {
-                                            let config = self.config.clone();
-                                            let fsm = Arc::clone(&self.file_state_manager);
-                                            let handle = tokio::spawn(async move {
-                                                tool_executor::handle_tool_call(&first_tool_call, &config, fsm).await
-                                            });
-                                            self.state = AppState::ExecutingTool(handle);
-                                        } else {
-                                            self.state = AppState::WaitingForUserInput;
-                                        }
+                                     if let AppState::ConfirmingToolExecution(tool_calls) = &self.state {
+                                         let tool_calls_clone = tool_calls.clone();
+                                         let config = self.config.clone();
+                                         let fsm = Arc::clone(&self.file_state_manager);
+                                         let handle = tokio::spawn(async move {
+                                             let mut results = Vec::new();
+                                             for tool_call in tool_calls_clone {
+                                                 results.push(tool_executor::handle_tool_call(&tool_call, &config, fsm.clone()).await?);
+                                             }
+                                             Ok(results)
+                                         });
+                                         self.state = AppState::ExecutingTools(handle);
                                     }
                     } else {
                                     // Channel closed or Ctrl+D, treat as cancellation
