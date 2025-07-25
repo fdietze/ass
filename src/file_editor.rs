@@ -24,9 +24,18 @@ use anyhow::{Result, anyhow};
 use once_cell::sync::Lazy;
 use openrouter_api::models::tool::{FunctionDescription, Tool};
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Default + Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    let opt = Option::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
+}
 
 // --- Tool-Facing Request Structs ---
 // These structs define the public API of the `edit_file` tool.
@@ -39,13 +48,13 @@ pub struct Anchor {
 
 #[derive(Deserialize, Debug)]
 pub struct TopLevelRequest {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub inserts: Vec<InsertRequest>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub replaces: Vec<ReplaceRequest>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub moves: Vec<MoveRequest>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub copies: Vec<CopyRequest>,
 }
 
