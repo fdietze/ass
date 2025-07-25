@@ -2,7 +2,6 @@ use anyhow::Result;
 use console::style;
 use openrouter_api::models::tool::{FunctionDescription, Tool};
 use serde::{Deserialize, Serialize};
-use std::io::{self, Write};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
@@ -44,25 +43,7 @@ pub async fn execute_shell_command(command: &str, allowed_prefixes: &[String]) -
         .iter()
         .any(|prefix| command.starts_with(prefix))
     {
-        println!(
-            "{}",
-            style(format!(
-                "Warning: The command `{command}` is not in the configured whitelist: {allowed_prefixes:?}."
-            ))
-            .yellow()
-        );
-        print!("Do you want to execute it anyway? (y/N) ");
-        io::stdout().flush()?;
-
-        let user_input = tokio::task::spawn_blocking(|| {
-            let mut line = String::new();
-            io::stdin().read_line(&mut line).map(|_| line)
-        })
-        .await??;
-
-        if user_input.trim().to_lowercase() != "y" {
-            return Err(anyhow::anyhow!("Command execution aborted by user."));
-        }
+        println! {"{}", style(format!("Warning: The command `{command}` is not in the configured whitelist: {allowed_prefixes:?}. Executing anyway.")).yellow()};
     }
 
     // --- Execution ---
