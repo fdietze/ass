@@ -128,6 +128,88 @@ mod tests {
     }
 
     #[test]
+    fn test_execute_replace_with_messy_whitespace_anchor_succeeds() {
+        let (_tmp_dir, file_path) = setup_test_file("one\n  let x = 1;\nthree");
+        let mut manager = FileStateManager::new();
+        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+
+        let initial_state = manager.open_file(&file_path).unwrap();
+        let lids: Vec<_> = initial_state.lines.keys().map(|k| k.to_string()).collect();
+
+        // Note the messy whitespace in the anchor content, which should be ignored
+        let request_json = format!(
+            r#"{{
+                "replaces": [
+                    {{
+                        "file_path": "{}",
+                        "start_anchor": {{
+                            "lid": "lid-{}",
+                            "line_content": "  let   x    =   1;  "
+                        }},
+                        "end_anchor": {{
+                            "lid": "lid-{}",
+                            "line_content": "let x =    1;"
+                        }},
+                        "new_content": ["let y = 2;"]
+                    }}
+                ]
+            }}"#,
+            file_path, lids[1], lids[1]
+        );
+
+        let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
+        let result = execute_file_operations(&args, &mut manager, &accessible_paths).unwrap();
+
+        assert!(result.contains("Patch from hash"));
+        let disk_content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(disk_content, "one\nlet y = 2;\nthree");
+    }
+
+    #[test]
+    fn test_execute_replace_with_collapsed_whitespace_still_fails_on_content_mismatch() {
+        let (_tmp_dir, file_path) = setup_test_file("one\nlet x = 1;\nthree");
+        let mut manager = FileStateManager::new();
+        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+
+        let initial_state = manager.open_file(&file_path).unwrap();
+        let lids: Vec<_> = initial_state.lines.keys().map(|k| k.to_string()).collect();
+
+        // The content is genuinely different, not just whitespace.
+        let request_json = format!(
+            r#"{{
+                "replaces": [
+                    {{
+                        "file_path": "{}",
+                        "start_anchor": {{
+                            "lid": "lid-{}",
+                            "line_content": "let y = 2;"
+                        }},
+                        "end_anchor": {{
+                            "lid": "lid-{}",
+                            "line_content": "let y = 2;"
+                        }},
+                        "new_content": ["..."]
+                    }}
+                ]
+            }}"#,
+            file_path, lids[1], lids[1]
+        );
+
+        let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
+        let result = execute_file_operations(&args, &mut manager, &accessible_paths);
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("anchor content mismatch"));
+        // Check that the error message contains the original, un-collapsed content
+        assert!(
+            error
+                .to_string()
+                .contains("Expected 'let y = 2;', found 'let x = 1;'")
+        );
+    }
+
+    #[test]
     fn test_execute_delete_successfully() {
         let (_tmp_dir, file_path) = setup_test_file("one\ntwo\nthree");
         let mut manager = FileStateManager::new();

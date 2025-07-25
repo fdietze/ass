@@ -95,6 +95,7 @@ dependencies = [
  "ignore",
  "once_cell",
  "openrouter_api",
+ "regex",
  "serde",
  "serde_json",
  "sha1",

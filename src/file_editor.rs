@@ -21,7 +21,9 @@ use crate::file_state_manager::FileStateManager;
 use crate::patch::{InsertOp, PatchOperation, ReplaceOp};
 use crate::permissions;
 use anyhow::{Result, anyhow};
+use once_cell::sync::Lazy;
 use openrouter_api::models::tool::{FunctionDescription, Tool};
+use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -306,6 +308,13 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
     }
 }
 
+static WHITESPACE_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s+").unwrap());
+
+/// Collapses all whitespace sequences to a single space and trims the string.
+fn collapse_whitespace(s: &str) -> String {
+    WHITESPACE_REGEX.replace_all(s.trim(), " ").to_string()
+}
+
 /// Validates a line anchor against the current file state.
 /// Checks that a line with the given LID exists and its content matches byte-for-byte.
 fn validate_anchor(
@@ -318,7 +327,10 @@ fn validate_anchor(
     let lid = FileState::parse_index(lid_str)?;
     match file_state.lines.get(&lid) {
         Some(actual_content) => {
-            if actual_content != expected_content {
+            let collapsed_actual = collapse_whitespace(actual_content);
+            let collapsed_expected = collapse_whitespace(expected_content);
+
+            if collapsed_actual != collapsed_expected {
                 return Err(anyhow!(
                     "Validation failed for '{op_name}': {anchor_name} content mismatch for LID '{lid_str}'. Expected '{expected_content}', found '{actual_content}'."
                 ));
