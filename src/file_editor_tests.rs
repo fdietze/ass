@@ -111,11 +111,11 @@ mod tests {
                 "replaces": [
                     {{
                         "file_path": "{file_path}",
-                        "start_anchor": {{
+                        "inclusive_start_anchor": {{
                             "lid": "{lid}",
                             "line_content": "two"
                         }},
-                        "end_anchor": {{
+                        "inclusive_end_anchor": {{
                             "lid": "{lid}",
                             "line_content": "two"
                         }},
@@ -148,11 +148,11 @@ mod tests {
                 "replaces": [
                     {{
                         "file_path": "{file_path}",
-                        "start_anchor": {{
+                        "inclusive_start_anchor": {{
                             "lid": "{lid}",
                             "line_content": "  let   x    =   1;  "
                         }},
-                        "end_anchor": {{
+                        "inclusive_end_anchor": {{
                             "lid": "{lid}",
                             "line_content": "let x =    1;"
                         }},
@@ -185,11 +185,11 @@ mod tests {
                 "replaces": [
                     {{
                         "file_path": "{file_path}",
-                        "start_anchor": {{
+                        "inclusive_start_anchor": {{
                             "lid": "{lid}",
                             "line_content": "let y = 2;"
                         }},
-                        "end_anchor": {{
+                        "inclusive_end_anchor": {{
                             "lid": "{lid}",
                             "line_content": "let y = 2;"
                         }},
@@ -227,11 +227,11 @@ mod tests {
                 "replaces": [
                     {{
                         "file_path": "{file_path}",
-                        "start_anchor": {{
+                        "inclusive_start_anchor": {{
                             "lid": "{lid}",
                             "line_content": "two"
                         }},
-                        "end_anchor": {{
+                        "inclusive_end_anchor": {{
                             "lid": "{lid}",
                             "line_content": "two"
                         }},
@@ -274,11 +274,11 @@ mod tests {
                 "moves": [
                     {{
                         "source_file_path": "{source_path}",
-                        "source_start_anchor": {{
+                        "source_inclusive_start_anchor": {{
                             "lid": "{source_lid_to_move}",
                             "line_content": "line to move"
                         }},
-                        "source_end_anchor": {{
+                        "source_inclusive_end_anchor": {{
                             "lid": "{source_lid_to_move}",
                             "line_content": "line to move"
                         }},
@@ -365,11 +365,11 @@ mod tests {
             }],
             replaces: vec![ReplaceRequest {
                 file_path: file2_path.clone(),
-                start_anchor: Anchor {
+                inclusive_start_anchor: Anchor {
                     lid: "lid-bad1_xxx".to_string(), // Invalid LID
                     line_content: "THIS IS WRONG".to_string(),
                 },
-                end_anchor: Anchor {
+                inclusive_end_anchor: Anchor {
                     lid: "lid-bad2_yyy".to_string(), // Invalid LID
                     line_content: "THIS IS WRONG".to_string(),
                 },
@@ -536,11 +536,11 @@ fn execute_operations_with_multiple_failures_reports_all_errors() -> Result<()> 
             // --- FAILURE 1 ---
             ReplaceRequest {
                 file_path: file_path1_str.to_string(),
-                start_anchor: Anchor {
+                inclusive_start_anchor: Anchor {
                     lid: lid1_1.clone(),
                     line_content: "WRONG content".to_string(), // Invalid content
                 },
-                end_anchor: Anchor {
+                inclusive_end_anchor: Anchor {
                     lid: lid1_1.clone(),
                     line_content: "line one".to_string(),
                 },
@@ -551,11 +551,11 @@ fn execute_operations_with_multiple_failures_reports_all_errors() -> Result<()> 
             // --- FAILURE 4 ---
             MoveRequest {
                 source_file_path: file_path1_str.to_string(),
-                source_start_anchor: Anchor {
+                source_inclusive_start_anchor: Anchor {
                     lid: lid1_2.clone(),
                     line_content: "line two".to_string(),
                 },
-                source_end_anchor: Anchor {
+                source_inclusive_end_anchor: Anchor {
                     lid: lid1_2.clone(),
                     line_content: "WRONG content for move".to_string(), // Invalid content
                 },
@@ -568,11 +568,11 @@ fn execute_operations_with_multiple_failures_reports_all_errors() -> Result<()> 
             // --- FAILURE 3 ---
             CopyRequest {
                 source_file_path: "non_existent_file.txt".to_string(), // Invalid file
-                source_start_anchor: Anchor {
+                source_inclusive_start_anchor: Anchor {
                     lid: "lid-0000_xxx".to_string(),
                     line_content: "any".to_string(),
                 },
-                source_end_anchor: Anchor {
+                source_inclusive_end_anchor: Anchor {
                     lid: "lid-0000_yyy".to_string(),
                     line_content: "any".to_string(),
                 },
@@ -603,10 +603,10 @@ fn execute_operations_with_multiple_failures_reports_all_errors() -> Result<()> 
         assert!(error_string.contains(&format!(
             "Move request #0 (source: '{file_path1_str}', dest: '{file_path2_str}')"
         ),));
-        assert!(error_string.contains("source_end_anchor content mismatch"));
+        assert!(error_string.contains("source_inclusive_end_anchor content mismatch"));
 
         assert!(error_string.contains(&format!("Replace request #0 (file: '{file_path1_str}')")));
-        assert!(error_string.contains("start_anchor content mismatch"));
+        assert!(error_string.contains("inclusive_start_anchor content mismatch"));
 
         assert!(error_string.contains(&format!("Insert request #0 (file: '{file_path1_str}')")));
         assert!(

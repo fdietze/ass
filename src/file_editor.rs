@@ -79,8 +79,8 @@ pub struct InsertRequest {
 #[serde(rename_all = "snake_case")]
 pub struct ReplaceRequest {
     pub file_path: String,
-    pub start_anchor: Anchor,
-    pub end_anchor: Anchor,
+    pub inclusive_start_anchor: Anchor,
+    pub inclusive_end_anchor: Anchor,
     pub new_content: Vec<String>,
 }
 
@@ -88,8 +88,8 @@ pub struct ReplaceRequest {
 #[serde(rename_all = "snake_case")]
 pub struct MoveRequest {
     pub source_file_path: String,
-    pub source_start_anchor: Anchor,
-    pub source_end_anchor: Anchor,
+    pub source_inclusive_start_anchor: Anchor,
+    pub source_inclusive_end_anchor: Anchor,
     pub dest_file_path: String,
     pub dest_at_position: Position,
     pub dest_anchor: Option<Anchor>,
@@ -99,8 +99,8 @@ pub struct MoveRequest {
 #[serde(rename_all = "snake_case")]
 pub struct CopyRequest {
     pub source_file_path: String,
-    pub source_start_anchor: Anchor,
-    pub source_end_anchor: Anchor,
+    pub source_inclusive_start_anchor: Anchor,
+    pub source_inclusive_end_anchor: Anchor,
     pub dest_file_path: String,
     pub dest_at_position: Position,
     pub dest_anchor: Option<Anchor>,
@@ -137,10 +137,10 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                             "title": "Copy Operation",
                             "properties": {
                                 "source_file_path": { "type": "string", "description": "Path of the file to copy lines from." },
-                                "source_start_anchor": {
+                                "source_inclusive_start_anchor": {
                                     "type": "object",
-                                    "title": "Source Start Anchor",
-                                    "description": "An anchor to uniquely identify the first line in the source range.",
+                                    "title": "Source Start Anchor (Inclusive)",
+                                    "description": "An anchor for the first line in the source range. The range is inclusive, so this line WILL be part of the copied content.",
                                     "properties": {
                                         "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
                                         "line_content": {
@@ -151,10 +151,10 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                     },
                                     "required": ["lid", "line_content"]
                                 },
-                                "source_end_anchor": {
+                                "source_inclusive_end_anchor": {
                                     "type": "object",
-                                    "title": "Source End Anchor",
-                                    "description": "An anchor to uniquely identify the last line in the source range.",
+                                    "title": "Source End Anchor (Inclusive)",
+                                    "description": "An anchor for the last line in the source range. The range is inclusive, so this line WILL be part of the copied content.",
                                     "properties": {
                                         "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
                                         "line_content": {
@@ -182,7 +182,7 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                     "required": ["lid", "line_content"]
                                 }
                             },
-                            "required": ["source_file_path", "source_start_anchor", "source_end_anchor", "dest_file_path", "dest_at_position"]
+                            "required": ["source_file_path", "source_inclusive_start_anchor", "source_inclusive_end_anchor", "dest_file_path", "dest_at_position"]
                         }
                     },
                     "moves": {
@@ -193,10 +193,10 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                             "title": "Move Operation",
                             "properties": {
                                 "source_file_path": { "type": "string", "description": "Path of the file to move lines from." },
-                                "source_start_anchor": {
+                                "source_inclusive_start_anchor": {
                                     "type": "object",
-                                    "title": "Source Start Anchor",
-                                    "description": "An anchor to uniquely identify the first line in the source range.",
+                                    "title": "Source Start Anchor (Inclusive)",
+                                    "description": "An anchor for the first line in the source range. The range is inclusive, so this line WILL be part of the moved content.",
                                     "properties": {
                                         "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
                                         "line_content": {
@@ -207,10 +207,10 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                     },
                                     "required": ["lid", "line_content"]
                                 },
-                                "source_end_anchor": {
+                                "source_inclusive_end_anchor": {
                                     "type": "object",
-                                    "title": "Source End Anchor",
-                                    "description": "An anchor to uniquely identify the last line in the source range.",
+                                    "title": "Source End Anchor (Inclusive)",
+                                    "description": "An anchor for the last line in the source range. The range is inclusive, so this line WILL be part of the moved content.",
                                     "properties": {
                                         "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
                                         "line_content": {
@@ -238,7 +238,7 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                     "required": ["lid", "line_content"]
                                 }
                             },
-                            "required": ["source_file_path", "source_start_anchor", "source_end_anchor", "dest_file_path", "dest_at_position"]
+                            "required": ["source_file_path", "source_inclusive_start_anchor", "source_inclusive_end_anchor", "dest_file_path", "dest_at_position"]
                         }
                     },
                     "replaces": {
@@ -249,10 +249,10 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                             "title": "Replace Operation",
                             "properties": {
                                 "file_path": { "type": "string", "description": "The relative path to the file to be modified." },
-                                "start_anchor": {
+                                "inclusive_start_anchor": {
                                     "type": "object",
-                                    "title": "Start Anchor",
-                                    "description": "An anchor to uniquely identify the first line in the range to replace.",
+                                    "title": "Start Anchor (Inclusive)",
+                                    "description": "An anchor for the first line in the range to replace. The range is inclusive, so this line WILL be replaced.",
                                     "properties": {
                                         "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
                                         "line_content": {
@@ -263,10 +263,10 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                     },
                                     "required": ["lid", "line_content"]
                                 },
-                                "end_anchor": {
+                                "inclusive_end_anchor": {
                                     "type": "object",
-                                    "title": "End Anchor",
-                                    "description": "An anchor to uniquely identify the last line in the range to replace. For a single-line operation, this should be the same as 'start_anchor'.",
+                                    "title": "End Anchor (Inclusive)",
+                                    "description": "An anchor for the last line in the range to replace. For a single-line operation, this should be the same as 'inclusive_start_anchor'. The range is inclusive, so this line WILL be replaced.",
                                     "properties": {
                                         "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
                                         "line_content": {
@@ -279,7 +279,7 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                 },
                                 "new_content": { "type": "array", "items": { "type": "string" }, "description": "The new lines to replace the old range with. Use an empty array to delete." }
                             },
-                            "required": ["file_path", "start_anchor", "end_anchor", "new_content"]
+                            "required": ["file_path", "inclusive_start_anchor", "inclusive_end_anchor", "new_content"]
                         }
                     },
                     "inserts": {
@@ -394,20 +394,23 @@ pub fn execute_file_operations(
                 let source_state = file_state_manager.open_file(&req.source_file_path)?;
                 validate_anchor(
                     source_state,
-                    &req.source_start_anchor.lid,
-                    &req.source_start_anchor.line_content,
+                    &req.source_inclusive_start_anchor.lid,
+                    &req.source_inclusive_start_anchor.line_content,
                     "copy",
-                    "source_start_anchor",
+                    "source_inclusive_start_anchor",
                 )?;
                 validate_anchor(
                     source_state,
-                    &req.source_end_anchor.lid,
-                    &req.source_end_anchor.line_content,
+                    &req.source_inclusive_end_anchor.lid,
+                    &req.source_inclusive_end_anchor.line_content,
                     "copy",
-                    "source_end_anchor",
+                    "source_inclusive_end_anchor",
                 )?;
                 source_state
-                    .get_lines_in_range(&req.source_start_anchor.lid, &req.source_end_anchor.lid)
+                    .get_lines_in_range(
+                        &req.source_inclusive_start_anchor.lid,
+                        &req.source_inclusive_end_anchor.lid,
+                    )
                     .map(|content| (source_state.path.clone(), content))?
             };
 
@@ -458,20 +461,23 @@ pub fn execute_file_operations(
                 let source_state = file_state_manager.open_file(&req.source_file_path)?;
                 validate_anchor(
                     source_state,
-                    &req.source_start_anchor.lid,
-                    &req.source_start_anchor.line_content,
+                    &req.source_inclusive_start_anchor.lid,
+                    &req.source_inclusive_start_anchor.line_content,
                     "move",
-                    "source_start_anchor",
+                    "source_inclusive_start_anchor",
                 )?;
                 validate_anchor(
                     source_state,
-                    &req.source_end_anchor.lid,
-                    &req.source_end_anchor.line_content,
+                    &req.source_inclusive_end_anchor.lid,
+                    &req.source_inclusive_end_anchor.line_content,
                     "move",
-                    "source_end_anchor",
+                    "source_inclusive_end_anchor",
                 )?;
                 source_state
-                    .get_lines_in_range(&req.source_start_anchor.lid, &req.source_end_anchor.lid)
+                    .get_lines_in_range(
+                        &req.source_inclusive_start_anchor.lid,
+                        &req.source_inclusive_end_anchor.lid,
+                    )
                     .map(|content| (source_state.path.clone(), content))?
             };
 
@@ -495,8 +501,8 @@ pub fn execute_file_operations(
             };
 
             let delete_op = PatchOperation::Replace(ReplaceOp {
-                start_lid: FileState::parse_lid(&req.source_start_anchor.lid)?.0,
-                end_lid: FileState::parse_lid(&req.source_end_anchor.lid)?.0,
+                start_lid: FileState::parse_lid(&req.source_inclusive_start_anchor.lid)?.0,
+                end_lid: FileState::parse_lid(&req.source_inclusive_end_anchor.lid)?.0,
                 content: vec![],
             });
 
@@ -532,17 +538,17 @@ pub fn execute_file_operations(
             let file_state = file_state_manager.open_file(&req.file_path)?;
             validate_anchor(
                 file_state,
-                &req.start_anchor.lid,
-                &req.start_anchor.line_content,
+                &req.inclusive_start_anchor.lid,
+                &req.inclusive_start_anchor.line_content,
                 "replace",
-                "start_anchor",
+                "inclusive_start_anchor",
             )?;
             validate_anchor(
                 file_state,
-                &req.end_anchor.lid,
-                &req.end_anchor.line_content,
+                &req.inclusive_end_anchor.lid,
+                &req.inclusive_end_anchor.line_content,
                 "replace",
-                "end_anchor",
+                "inclusive_end_anchor",
             )?;
 
             let new_content_with_suffixes: Vec<(String, String)> = req
@@ -552,8 +558,8 @@ pub fn execute_file_operations(
                 .collect();
 
             let internal_op = PatchOperation::Replace(ReplaceOp {
-                start_lid: FileState::parse_lid(&req.start_anchor.lid)?.0,
-                end_lid: FileState::parse_lid(&req.end_anchor.lid)?.0,
+                start_lid: FileState::parse_lid(&req.inclusive_start_anchor.lid)?.0,
+                end_lid: FileState::parse_lid(&req.inclusive_end_anchor.lid)?.0,
                 content: new_content_with_suffixes,
             });
             Ok((file_state.path.clone(), internal_op))
