@@ -325,7 +325,8 @@ fn collapse_whitespace(s: &str) -> String {
 }
 
 /// Validates a line anchor against the current file state.
-/// Checks that a line with the given LID exists and its content matches byte-for-byte.
+/// Checks that a line with the given LID exists, its content matches,
+/// and the random suffix in the LID matches the stored suffix.
 fn validate_anchor(
     file_state: &FileState,
     lid_str: &str,
@@ -333,9 +334,14 @@ fn validate_anchor(
     op_name: &str,
     anchor_name: &str,
 ) -> Result<()> {
-    let lid = FileState::parse_index(lid_str)?;
+    let (lid, expected_suffix) = FileState::parse_lid(lid_str)?;
     match file_state.lines.get(&lid) {
-        Some(actual_content) => {
+        Some((actual_content, actual_suffix)) => {
+            if &expected_suffix != actual_suffix {
+                return Err(anyhow!(
+                    "Validation failed for '{op_name}': {anchor_name} suffix mismatch for LID '{lid_str}'. The line content is correct, but the file has been modified. Please re-read the file to get the latest LIDs."
+                ));
+            }
             let collapsed_actual = collapse_whitespace(actual_content);
             let collapsed_expected = collapse_whitespace(expected_content);
 
@@ -418,7 +424,7 @@ pub fn execute_file_operations(
                         "copy",
                         "dest_anchor",
                     )?;
-                    Some(FileState::parse_index(&anchor.lid)?)
+                    Some(FileState::parse_lid(&anchor.lid)?.0)
                 }
             };
 
@@ -473,13 +479,13 @@ pub fn execute_file_operations(
                         "move",
                         "dest_anchor",
                     )?;
-                    Some(FileState::parse_index(&anchor.lid)?)
+                    Some(FileState::parse_lid(&anchor.lid)?.0)
                 }
             };
 
             let delete_op = PatchOperation::Replace(ReplaceOp {
-                start_lid: FileState::parse_index(&req.source_start_anchor.lid)?,
-                end_lid: FileState::parse_index(&req.source_end_anchor.lid)?,
+                start_lid: FileState::parse_lid(&req.source_start_anchor.lid)?.0,
+                end_lid: FileState::parse_lid(&req.source_end_anchor.lid)?.0,
                 content: vec![],
             });
             planned_ops.entry(source_path).or_default().push(delete_op);
@@ -513,10 +519,16 @@ pub fn execute_file_operations(
                 "end_anchor",
             )?;
 
+            let new_content_with_suffixes: Vec<(String, String)> = req
+                .new_content
+                .iter()
+                .map(|line| (line.clone(), crate::file_state::generate_random_suffix()))
+                .collect();
+
             let internal_op = PatchOperation::Replace(ReplaceOp {
-                start_lid: FileState::parse_index(&req.start_anchor.lid)?,
-                end_lid: FileState::parse_index(&req.end_anchor.lid)?,
-                content: req.new_content.clone(),
+                start_lid: FileState::parse_lid(&req.start_anchor.lid)?.0,
+                end_lid: FileState::parse_lid(&req.end_anchor.lid)?.0,
+                content: new_content_with_suffixes,
             });
             planned_ops
                 .entry(file_state.path.clone())
@@ -543,13 +555,19 @@ pub fn execute_file_operations(
                         "insert",
                         "anchor",
                     )?;
-                    Some(FileState::parse_index(&anchor.lid)?)
+                    Some(FileState::parse_lid(&anchor.lid)?.0)
                 }
             };
 
+            let new_content_with_suffixes: Vec<(String, String)> = req
+                .new_content
+                .iter()
+                .map(|line| (line.clone(), crate::file_state::generate_random_suffix()))
+                .collect();
+
             let internal_op = PatchOperation::Insert(InsertOp {
                 after_lid,
-                content: req.new_content.clone(),
+                content: new_content_with_suffixes,
             });
             planned_ops
                 .entry(file_state.path.clone())

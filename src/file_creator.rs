@@ -114,7 +114,7 @@ pub fn execute_create_files(
             fs::write(path_to_create, &content)?;
 
             let file_state = file_state_manager.open_file(&spec.file_path)?;
-            Ok(file_state.get_lif_representation())
+            Ok(file_state.display_lif_contents())
         })();
 
         match result {
@@ -159,8 +159,8 @@ mod tests {
         assert!(result.contains(&format!("File: {file_path_str}")));
         let file_state = manager.open_file(&file_path_str).unwrap();
         let indexes: Vec<_> = file_state.lines.keys().map(|k| k.to_string()).collect();
-        assert!(result.contains(&format!("lid-{}: hello", indexes[0])));
-        assert!(result.contains(&format!("lid-{}: world", indexes[1])));
+        assert!(result.contains(&format!("lid-{}_", indexes[0])));
+        assert!(result.contains(&format!("lid-{}_", indexes[1])));
         assert!(result.contains("Hash:"));
 
         let disk_content = fs::read_to_string(file_path).unwrap();

@@ -25,6 +25,7 @@ use crate::diff;
 use crate::patch::PatchOperation;
 use anyhow::{Result, anyhow};
 use fractional_index::FractionalIndex;
+use rand::Rng;
 use serde::Deserialize;
 use sha1::{Digest, Sha1};
 use std::collections::BTreeMap;
@@ -43,17 +44,32 @@ pub struct RangeSpec {
 pub struct FileState {
     /// The absolute, canonicalized path to the file on disk.
     pub path: PathBuf,
-    /// The core of the LIF representation: a sorted map of LID -> line content.
+    /// The core of the LIF representation: a sorted map of LID -> (line content, random_suffix).
     ///
     /// ### Reasoning
     /// A `BTreeMap` is used because it keeps the lines sorted by LID automatically, which
     /// makes it efficient to reconstruct the file and to find ranges for patching operations.
-    pub lines: BTreeMap<FractionalIndex, String>,
+    /// The random suffix makes each LID highly distinct, which is crucial for the LLM.
+    pub lines: BTreeMap<FractionalIndex, (String, String)>,
     /// The current SHA-1 hash of the LIF content, used for state synchronization.
     /// This hash acts as a version identifier for the file's state.
     pub lif_hash: String,
     /// Whether the original file content ended with a newline.
     pub(crate) ends_with_newline: bool,
+}
+
+/// Generates a short, random alphanumeric string to be used as a suffix for LIDs.
+const SUFFIX_CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+const SUFFIX_LEN: usize = 4;
+
+pub(crate) fn generate_random_suffix() -> String {
+    let mut rng = rand::thread_rng();
+    (0..SUFFIX_LEN)
+        .map(|_| {
+            let idx = rng.gen_range(0..SUFFIX_CHARSET.len());
+            SUFFIX_CHARSET[idx] as char
+        })
+        .collect()
 }
 
 /// Generates a colorized, human-readable diff between the old and new file states.
@@ -67,7 +83,8 @@ impl FileState {
         for line_content in content.lines() {
             // `FractionalIndex::new` with `None` for the second argument generates an index after the first.
             let new_index = FractionalIndex::new(last_index.as_ref(), None).unwrap();
-            lines.insert(new_index.clone(), line_content.to_string());
+            let suffix = generate_random_suffix();
+            lines.insert(new_index.clone(), (line_content.to_string(), suffix));
             last_index = Some(new_index);
         }
 
@@ -110,11 +127,12 @@ impl FileState {
                         .map(|(k, _)| k.clone());
 
                     let mut last_gen_index = after_index.cloned();
-                    for line_content in op.content.iter() {
+                    for (line_content, suffix) in op.content.iter() {
                         let new_index =
                             FractionalIndex::new(last_gen_index.as_ref(), next_index.as_ref())
                                 .unwrap();
-                        temp_lines.insert(new_index.clone(), line_content.clone());
+                        temp_lines
+                            .insert(new_index.clone(), (line_content.clone(), suffix.clone()));
                         last_gen_index = Some(new_index);
                     }
                 }
@@ -153,13 +171,14 @@ impl FileState {
                         .map(|(k, _)| k.clone());
 
                     let mut last_gen_index = after_index_for_insert.cloned();
-                    for line_content in op.content.iter() {
+                    for (line_content, suffix) in op.content.iter() {
                         let new_index = FractionalIndex::new(
                             last_gen_index.as_ref(),
                             next_index_for_insert.as_ref(),
                         )
                         .unwrap();
-                        temp_lines.insert(new_index.clone(), line_content.clone());
+                        temp_lines
+                            .insert(new_index.clone(), (line_content.clone(), suffix.clone()));
                         last_gen_index = Some(new_index);
                     }
                 }
@@ -198,7 +217,7 @@ impl FileState {
         let mut content = self
             .lines
             .values()
-            .cloned()
+            .map(|(content, _)| content.clone())
             .collect::<Vec<String>>()
             .join("\n");
 
@@ -211,8 +230,8 @@ impl FileState {
 
     /// Generates the complete LIF representation of the file to be sent to the LLM.
     /// This includes the header with the file path and the crucial `lif_hash`.
-    pub fn get_lif_representation(&self) -> String {
-        self.get_lif_string_for_ranges(None)
+    pub fn display_lif_contents(&self) -> String {
+        self.display_lif_contents_for_ranges(None)
     }
 
     /// Generates a LIF representation for specific line ranges.
@@ -220,7 +239,7 @@ impl FileState {
     /// This is the canonical way to display file content to the LLM. It generates
     /// a consistent header and formats the selected lines with their LIDs.
     /// If `ranges` is `None` or empty, it renders the entire file.
-    pub fn get_lif_string_for_ranges(&self, ranges: Option<&[RangeSpec]>) -> String {
+    pub fn display_lif_contents_for_ranges(&self, ranges: Option<&[RangeSpec]>) -> String {
         let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let relative_path = self.path.strip_prefix(&project_root).unwrap_or(&self.path);
         let short_hash = self.get_short_hash();
@@ -243,9 +262,10 @@ impl FileState {
                     .lines
                     .iter()
                     .enumerate()
-                    .map(|(i, (index, content))| {
+                    .map(|(i, (index, (content, suffix)))| {
                         let line_num = i + 1;
-                        format!("{line_num:<5}lid-{}: {content}", index.to_string())
+                        let lid = Self::display_lid(index, suffix);
+                        format!("{line_num:<5}{lid}: {content}")
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
@@ -281,9 +301,10 @@ impl FileState {
                     let range_content = all_lines[start_idx..end_idx]
                         .iter()
                         .enumerate()
-                        .map(|(line_offset, (index, content))| {
+                        .map(|(line_offset, (index, (content, suffix)))| {
                             let line_num = start_idx + line_offset + 1;
-                            format!("{line_num:<5}lid-{}: {content}", index.to_string())
+                            let lid = Self::display_lid(index, suffix);
+                            format!("{line_num:<5}{lid}: {content}")
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -309,9 +330,9 @@ impl FileState {
         &self,
         start_lid_str: &str,
         end_lid_str: &str,
-    ) -> Result<Vec<String>> {
-        let start_lid = Self::parse_index(start_lid_str)?;
-        let end_lid = Self::parse_index(end_lid_str)?;
+    ) -> Result<Vec<(String, String)>> {
+        let (start_lid, _) = Self::parse_lid(start_lid_str)?;
+        let (end_lid, _) = Self::parse_lid(end_lid_str)?;
 
         if start_lid > end_lid {
             return Err(anyhow!(
@@ -319,10 +340,10 @@ impl FileState {
             ));
         }
 
-        let lines_in_range: Vec<String> = self
+        let lines_in_range: Vec<(String, String)> = self
             .lines
             .range(start_lid.clone()..=end_lid.clone())
-            .map(|(_, content)| content.clone())
+            .map(|(_, (content, suffix))| (content.clone(), suffix.clone()))
             .collect();
 
         // This check is important. An empty result can be valid (e.g., copying an empty range),
@@ -358,7 +379,9 @@ impl FileState {
         let mut content = self
             .lines
             .iter()
-            .map(|(index, content)| format!("{index:?}: {content}"))
+            .map(|(index, (content, suffix))| {
+                format!("{}_{}: {}", index.to_string(), suffix, content)
+            })
             .collect::<Vec<String>>()
             .join("\n");
         if self.ends_with_newline {
@@ -367,16 +390,30 @@ impl FileState {
         content
     }
 
-    /// Parses a string like "lid-..." into its `FractionalIndex` form.
-    pub fn parse_index(index_str: &str) -> Result<FractionalIndex> {
-        if let Some(stripped) = index_str.strip_prefix("lid-") {
-            FractionalIndex::from_string(stripped).map_err(|_| {
-                anyhow!("Invalid FractionalIndex format after stripping 'lid-': '{stripped}'")
-            })
-        } else {
-            Err(anyhow!(
-                "Invalid LID format: must start with 'lid-'. Got: '{index_str}'"
-            ))
+    /// Formats an index and suffix into the `lid-index_suffix` string format.
+    pub fn display_lid(index: &FractionalIndex, suffix: &str) -> String {
+        format!("lid-{}_{}", index.to_string(), suffix)
+    }
+
+    /// Parses a string like "lid-..." into its `FractionalIndex` and suffix components.
+    pub fn parse_lid(lid_str: &str) -> Result<(FractionalIndex, String)> {
+        let stripped = lid_str.strip_prefix("lid-").ok_or_else(|| {
+            anyhow!("Invalid LID format: must start with 'lid-'. Got: '{lid_str}'")
+        })?;
+
+        let parts: Vec<&str> = stripped.split('_').collect();
+        if parts.len() != 2 {
+            return Err(anyhow!(
+                "Invalid LID format: must be 'lid-index_suffix'. Got: '{lid_str}'"
+            ));
         }
+
+        let index_part = parts[0];
+        let suffix_part = parts[1];
+
+        let index = FractionalIndex::from_string(index_part)
+            .map_err(|_| anyhow!("Invalid FractionalIndex format in LID: '{index_part}'"))?;
+
+        Ok((index, suffix_part.to_string()))
     }
 }

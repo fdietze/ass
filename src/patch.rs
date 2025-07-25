@@ -20,15 +20,18 @@ pub enum PatchOperation {
 /// A validated command to insert content.
 #[derive(Debug)]
 pub struct InsertOp {
-    /// The LID after which to insert. `None` indicates insertion at the start of the file.
+    /// The LID of the line *after which* the new content should be inserted.
+    /// If `None`, the content is inserted at the beginning of the file.
     pub after_lid: Option<FractionalIndex>,
-    pub content: Vec<String>,
+    /// The new lines to insert, each with its own randomly generated suffix.
+    pub content: Vec<(String, String)>,
 }
 
-/// A validated command to replace a range of lines.
-#[derive(Debug)]
+/// A validated request to replace a range of lines.
+#[derive(Debug, Clone)]
 pub struct ReplaceOp {
     pub start_lid: FractionalIndex,
     pub end_lid: FractionalIndex,
-    pub content: Vec<String>,
+    /// The new lines to replace the range with, each with its own randomly generated suffix.
+    pub content: Vec<(String, String)>,
 }

@@ -47,7 +47,7 @@ pub fn expand_file_mentions(
     for file_path in &expansion_result.files {
         match file_state_manager.open_file(file_path) {
             Ok(file_state) => {
-                attached_files_content.push_str(&file_state.get_lif_representation());
+                attached_files_content.push_str(&file_state.display_lif_contents());
                 attached_files_content.push('\n');
             }
             Err(e) => eprintln!(

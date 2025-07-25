@@ -4,6 +4,7 @@
 #[cfg(test)]
 mod tests {
     use crate::file_editor::*;
+    use crate::file_state::FileState;
     use crate::file_state_manager::FileStateManager;
     use crate::patch::{InsertOp, PatchOperation, ReplaceOp};
     use std::fs;
@@ -16,6 +17,12 @@ mod tests {
         (tmp_dir, file_path.to_str().unwrap().to_string())
     }
 
+    // A helper to get a valid LID string (including a random suffix) for a given line index
+    fn get_lid_for_line(state: &FileState, line_idx: usize) -> String {
+        let (index, (_, suffix)) = state.lines.iter().nth(line_idx).unwrap();
+        FileState::display_lid(index, suffix)
+    }
+
     #[test]
     fn test_execute_insert_successfully() {
         let (_tmp_dir, file_path) = setup_test_file("line 1\nline 3");
@@ -23,7 +30,7 @@ mod tests {
         let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
         let initial_state = manager.open_file(&file_path).unwrap();
-        let lid_line_1 = initial_state.lines.keys().next().unwrap().to_string();
+        let lid = get_lid_for_line(initial_state, 0);
 
         let request_json = format!(
             r#"{{
@@ -33,7 +40,7 @@ mod tests {
                         "new_content": ["line 2"],
                         "at_position": "after_anchor",
                         "anchor": {{
-                            "lid": "lid-{lid_line_1}",
+                            "lid": "{lid}",
                             "line_content": "line 1"
                         }}
                     }}
@@ -56,7 +63,7 @@ mod tests {
         let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
         let initial_state = manager.open_file(&file_path).unwrap();
-        let lid_line_1 = initial_state.lines.keys().next().unwrap().to_string();
+        let lid = get_lid_for_line(initial_state, 0);
 
         let request_json = format!(
             r#"{{
@@ -66,7 +73,7 @@ mod tests {
                         "new_content": ["line 2"],
                         "at_position": "after_anchor",
                         "anchor": {{
-                            "lid": "lid-{lid_line_1}",
+                            "lid": "{lid}",
                             "line_content": "WRONG content"
                         }}
                     }}
@@ -97,7 +104,7 @@ mod tests {
         let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
         let initial_state = manager.open_file(&file_path).unwrap();
-        let lids: Vec<_> = initial_state.lines.keys().map(|k| k.to_string()).collect();
+        let lid = get_lid_for_line(initial_state, 1);
 
         let request_json = format!(
             r#"{{
@@ -105,18 +112,18 @@ mod tests {
                     {{
                         "file_path": "{}",
                         "start_anchor": {{
-                            "lid": "lid-{}",
+                            "lid": "{}",
                             "line_content": "two"
                         }},
                         "end_anchor": {{
-                            "lid": "lid-{}",
+                            "lid": "{}",
                             "line_content": "two"
                         }},
                         "new_content": ["2"]
                     }}
                 ]
             }}"#,
-            file_path, lids[1], lids[1]
+            file_path, lid, lid
         );
 
         let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
@@ -134,7 +141,7 @@ mod tests {
         let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
         let initial_state = manager.open_file(&file_path).unwrap();
-        let lids: Vec<_> = initial_state.lines.keys().map(|k| k.to_string()).collect();
+        let lid = get_lid_for_line(initial_state, 1);
 
         // Note the messy whitespace in the anchor content, which should be ignored
         let request_json = format!(
@@ -143,18 +150,18 @@ mod tests {
                     {{
                         "file_path": "{}",
                         "start_anchor": {{
-                            "lid": "lid-{}",
+                            "lid": "{}",
                             "line_content": "  let   x    =   1;  "
                         }},
                         "end_anchor": {{
-                            "lid": "lid-{}",
+                            "lid": "{}",
                             "line_content": "let x =    1;"
                         }},
                         "new_content": ["let y = 2;"]
                     }}
                 ]
             }}"#,
-            file_path, lids[1], lids[1]
+            file_path, lid, lid
         );
 
         let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
@@ -172,7 +179,7 @@ mod tests {
         let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
         let initial_state = manager.open_file(&file_path).unwrap();
-        let lids: Vec<_> = initial_state.lines.keys().map(|k| k.to_string()).collect();
+        let lid = get_lid_for_line(initial_state, 1);
 
         // The content is genuinely different, not just whitespace.
         let request_json = format!(
@@ -181,18 +188,18 @@ mod tests {
                     {{
                         "file_path": "{}",
                         "start_anchor": {{
-                            "lid": "lid-{}",
+                            "lid": "{}",
                             "line_content": "let y = 2;"
                         }},
                         "end_anchor": {{
-                            "lid": "lid-{}",
+                            "lid": "{}",
                             "line_content": "let y = 2;"
                         }},
                         "new_content": ["..."]
                     }}
                 ]
             }}"#,
-            file_path, lids[1], lids[1]
+            file_path, lid, lid
         );
 
         let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
@@ -216,7 +223,7 @@ mod tests {
         let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
         let initial_state = manager.open_file(&file_path).unwrap();
-        let lids: Vec<_> = initial_state.lines.keys().map(|k| k.to_string()).collect();
+        let lid = get_lid_for_line(initial_state, 1);
 
         let request_json = format!(
             r#"{{
@@ -224,18 +231,18 @@ mod tests {
                     {{
                         "file_path": "{}",
                         "start_anchor": {{
-                            "lid": "lid-{}",
+                            "lid": "{}",
                             "line_content": "two"
                         }},
                         "end_anchor": {{
-                            "lid": "lid-{}",
+                            "lid": "{}",
                             "line_content": "two"
                         }},
                         "new_content": []
                     }}
                 ]
             }}"#,
-            file_path, lids[1], lids[1]
+            file_path, lid, lid
         );
 
         let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
@@ -256,10 +263,11 @@ mod tests {
         ];
 
         let source_state = manager.open_file(&source_path).unwrap();
-        let source_lids: Vec<_> = source_state.lines.keys().map(|k| k.to_string()).collect();
+        let source_lid_to_move = get_lid_for_line(source_state, 1);
+        let original_suffix = source_lid_to_move.split('_').last().unwrap().to_string();
 
         let dest_state = manager.open_file(&dest_path).unwrap();
-        let dest_lids: Vec<_> = dest_state.lines.keys().map(|k| k.to_string()).collect();
+        let dest_lid = get_lid_for_line(dest_state, 0);
 
         let request_json = format!(
             r#"{{
@@ -268,23 +276,23 @@ mod tests {
                         "op": "move",
                         "source_file_path": "{}",
                         "source_start_anchor": {{
-                            "lid": "lid-{}",
+                            "lid": "{}",
                             "line_content": "line to move"
                         }},
                         "source_end_anchor": {{
-                            "lid": "lid-{}",
+                            "lid": "{}",
                             "line_content": "line to move"
                         }},
                         "dest_file_path": "{}",
                         "dest_at_position": "after_anchor",
                         "dest_anchor": {{
-                            "lid": "lid-{}",
+                            "lid": "{}",
                             "line_content": "dest line 1"
                         }}
                     }}
                 ]
             }}"#,
-            source_path, source_lids[1], source_lids[1], dest_path, dest_lids[0]
+            source_path, source_lid_to_move, source_lid_to_move, dest_path, dest_lid
         );
 
         let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
@@ -295,6 +303,11 @@ mod tests {
 
         let dest_content = fs::read_to_string(&dest_path).unwrap();
         assert_eq!(dest_content, "dest line 1\nline to move");
+
+        // Verify that the suffix of the moved line was preserved.
+        let final_dest_state = manager.open_file(&dest_path).unwrap();
+        let moved_line_lid = get_lid_for_line(final_dest_state, 1);
+        assert!(moved_line_lid.ends_with(&original_suffix));
     }
 
     #[test]
@@ -338,7 +351,7 @@ mod tests {
         ];
 
         let file1_state = manager.open_file(&file1_path).unwrap();
-        let file1_lid = file1_state.lines.keys().next().unwrap().to_string();
+        let file1_lid = get_lid_for_line(file1_state, 0);
 
         let request_json = format!(
             r#"{{
@@ -348,7 +361,7 @@ mod tests {
                         "new_content": ["file1 line2"],
                         "at_position": "after_anchor",
                         "anchor": {{
-                            "lid": "lid-{file1_lid}",
+                            "lid": "{file1_lid}",
                             "line_content": "file1 line1"
                         }}
                     }}
@@ -406,7 +419,10 @@ mod tests {
         let replace_op = PatchOperation::Replace(ReplaceOp {
             start_lid: lid_b_idx.clone(),
             end_lid: lid_b_idx,
-            content: vec!["line A".to_string(), "line C".to_string()],
+            content: vec![
+                ("line A".to_string(), "rand1".to_string()),
+                ("line C".to_string(), "rand2".to_string()),
+            ],
         });
 
         // Manually apply the first part of the plan
@@ -417,16 +433,16 @@ mod tests {
             .unwrap();
 
         let state_after_replace = manager.get_file_state_mut(&file_path).unwrap();
-        let lid_c_idx = state_after_replace
+        let (lid_c_idx, _) = state_after_replace
             .lines
             .iter()
-            .find(|(_, v)| *v == "line C")
-            .map(|(k, _)| k.clone())
+            .find(|(_, (v, _))| *v == "line C")
+            .map(|(k, v)| (k.clone(), v.clone()))
             .unwrap();
 
         let insert_op = PatchOperation::Insert(InsertOp {
             after_lid: Some(lid_c_idx),
-            content: vec!["line D".to_string()],
+            content: vec![("line D".to_string(), "rand3".to_string())],
         });
 
         manager
@@ -446,7 +462,7 @@ mod tests {
         let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
 
         let initial_state = manager.open_file(&file_path).unwrap();
-        let lid_line_1 = initial_state.lines.keys().next().unwrap().to_string();
+        let lid_line_1_index = initial_state.lines.keys().next().unwrap().to_string();
 
         let request_json = format!(
             r#"{{
@@ -456,7 +472,7 @@ mod tests {
                         "new_content": ["line 2"],
                         "at_position": "after_anchor",
                         "anchor": {{
-                            "lid": "{lid_line_1}",
+                            "lid": "{lid_line_1_index}",
                             "line_content": "line 1"
                         }}
                     }}
@@ -474,5 +490,40 @@ mod tests {
                 .to_string()
                 .contains("Invalid LID format: must start with 'lid-'")
         );
+    }
+
+    #[test]
+    fn test_execute_fails_with_invalid_suffix() {
+        let (_tmp_dir, file_path) = setup_test_file("line 1");
+        let mut manager = FileStateManager::new();
+        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+
+        let initial_state = manager.open_file(&file_path).unwrap();
+        let (index, _) = initial_state.lines.iter().next().unwrap();
+        // Construct a LID with the correct index but a deliberately wrong suffix
+        let invalid_lid = format!("lid-{}_xxxx", index.to_string());
+
+        let request_json = format!(
+            r#"{{
+                "inserts": [
+                    {{
+                        "file_path": "{file_path}",
+                        "new_content": ["line 2"],
+                        "at_position": "after_anchor",
+                        "anchor": {{
+                            "lid": "{invalid_lid}",
+                            "line_content": "line 1"
+                        }}
+                    }}
+                ]
+            }}"#
+        );
+
+        let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
+        let result = execute_file_operations(&args, &mut manager, &accessible_paths);
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("anchor suffix mismatch"));
     }
 }
