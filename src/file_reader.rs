@@ -23,14 +23,20 @@ pub fn read_file_tool_schema() -> Tool {
             name: "read_file".to_string(),
             description: Some(
                 r#"CRITICAL: DO NOT use this tool if the file's content is already in your context from the conversation history or attached files. Attached files are always fresh. It is wasteful and unnecessary. Follow the user's instruction using the information you already have.
-Use this tool ONLY to read a file for the first time, or if you have reason to believe it has been changed by an external process.
+Use this tool ONLY to read files for the first time, or if you have reason to believe it has been changed by an external process.
 
-Reads files or line ranges.
-
-**Output Format**:
-Each line is prefixed with its line number and a unique Line Identifier (LID). The LID is crucial for any subsequent edits.
+Reads files with optional line ranges. It must always be an array of file path objects.
 
 Example tool call:
+{
+  "files": [
+    {
+      "file_path": "src/main.rs",
+    }
+  ]
+}
+
+Example tool call with range:
 {
   "files": [
     {
@@ -44,6 +50,9 @@ Example tool call:
     }
   ]
 }
+
+**Output Format**:
+Each line is prefixed with its line number and a unique Line Identifier (LID). The LID is crucial for any subsequent edits.
 
 Example `read_file` output for `jokes.txt`:
 ```
