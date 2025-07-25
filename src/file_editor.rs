@@ -379,12 +379,14 @@ pub fn execute_file_operations(
 
     // A map from a canonical file path to its planned operations.
     let mut planned_ops: HashMap<PathBuf, Vec<PatchOperation>> = HashMap::new();
+    let mut validation_errors: Vec<anyhow::Error> = Vec::new();
 
     // --- Phase 1: Plan and Validate all operations ---
     // The order here is fixed and documented for the LLM: copies, moves, replaces, inserts.
-    let planning_result: Result<()> = (|| {
-        // Plan Copies
-        for req in &args.copies {
+
+    // Plan Copies
+    for (i, req) in args.copies.iter().enumerate() {
+        let result: Result<(PathBuf, PatchOperation)> = (|| {
             permissions::is_path_accessible(Path::new(&req.source_file_path), accessible_paths)?;
             permissions::is_path_accessible(Path::new(&req.dest_file_path), accessible_paths)?;
 
@@ -404,9 +406,9 @@ pub fn execute_file_operations(
                     "copy",
                     "source_end_anchor",
                 )?;
-                let content = source_state
-                    .get_lines_in_range(&req.source_start_anchor.lid, &req.source_end_anchor.lid)?;
-                (source_state.path.clone(), content)
+                source_state
+                    .get_lines_in_range(&req.source_start_anchor.lid, &req.source_end_anchor.lid)
+                    .map(|content| (source_state.path.clone(), content))?
             };
 
             let dest_state = file_state_manager.open_file(&req.dest_file_path)?;
@@ -432,14 +434,23 @@ pub fn execute_file_operations(
                 after_lid,
                 content: content_to_transfer,
             });
-            planned_ops
-                .entry(dest_state.path.clone())
-                .or_default()
-                .push(insert_op);
-        }
+            Ok((dest_state.path.clone(), insert_op))
+        })();
 
-        // Plan Moves
-        for req in &args.moves {
+        match result {
+            Ok((path, op)) => planned_ops.entry(path).or_default().push(op),
+            Err(e) => {
+                validation_errors.push(anyhow!(
+                    "Copy request #{i} (source: '{}'): {e}",
+                    req.source_file_path
+                ));
+            }
+        }
+    }
+
+    // Plan Moves
+    for (i, req) in args.moves.iter().enumerate() {
+        let result: Result<((PathBuf, PatchOperation), (PathBuf, PatchOperation))> = (|| {
             permissions::is_path_accessible(Path::new(&req.source_file_path), accessible_paths)?;
             permissions::is_path_accessible(Path::new(&req.dest_file_path), accessible_paths)?;
 
@@ -459,9 +470,9 @@ pub fn execute_file_operations(
                     "move",
                     "source_end_anchor",
                 )?;
-                let content = source_state
-                    .get_lines_in_range(&req.source_start_anchor.lid, &req.source_end_anchor.lid)?;
-                (source_state.path.clone(), content)
+                source_state
+                    .get_lines_in_range(&req.source_start_anchor.lid, &req.source_end_anchor.lid)
+                    .map(|content| (source_state.path.clone(), content))?
             };
 
             let dest_state = file_state_manager.open_file(&req.dest_file_path)?;
@@ -488,20 +499,35 @@ pub fn execute_file_operations(
                 end_lid: FileState::parse_lid(&req.source_end_anchor.lid)?.0,
                 content: vec![],
             });
-            planned_ops.entry(source_path).or_default().push(delete_op);
 
             let insert_op = PatchOperation::Insert(InsertOp {
                 after_lid,
                 content: content_to_transfer,
             });
-            planned_ops
-                .entry(dest_state.path.clone())
-                .or_default()
-                .push(insert_op);
-        }
+            Ok((
+                (source_path, delete_op),
+                (dest_state.path.clone(), insert_op),
+            ))
+        })();
 
-        // Plan Replaces
-        for req in &args.replaces {
+        match result {
+            Ok(((source_path, delete_op), (dest_path, insert_op))) => {
+                planned_ops.entry(source_path).or_default().push(delete_op);
+                planned_ops.entry(dest_path).or_default().push(insert_op);
+            }
+            Err(e) => {
+                validation_errors.push(anyhow!(
+                    "Move request #{i} (source: '{}', dest: '{}'): {e}",
+                    req.source_file_path,
+                    req.dest_file_path
+                ));
+            }
+        }
+    }
+
+    // Plan Replaces
+    for (i, req) in args.replaces.iter().enumerate() {
+        let result: Result<(PathBuf, PatchOperation)> = (|| {
             permissions::is_path_accessible(Path::new(&req.file_path), accessible_paths)?;
             let file_state = file_state_manager.open_file(&req.file_path)?;
             validate_anchor(
@@ -530,14 +556,23 @@ pub fn execute_file_operations(
                 end_lid: FileState::parse_lid(&req.end_anchor.lid)?.0,
                 content: new_content_with_suffixes,
             });
-            planned_ops
-                .entry(file_state.path.clone())
-                .or_default()
-                .push(internal_op);
-        }
+            Ok((file_state.path.clone(), internal_op))
+        })();
 
-        // Plan Inserts
-        for req in &args.inserts {
+        match result {
+            Ok((path, op)) => planned_ops.entry(path).or_default().push(op),
+            Err(e) => {
+                validation_errors.push(anyhow!(
+                    "Replace request #{i} (file: '{}'): {e}",
+                    req.file_path
+                ));
+            }
+        }
+    }
+
+    // Plan Inserts
+    for (i, req) in args.inserts.iter().enumerate() {
+        let result: Result<(PathBuf, PatchOperation)> = (|| {
             permissions::is_path_accessible(Path::new(&req.file_path), accessible_paths)?;
             let file_state = file_state_manager.open_file(&req.file_path)?;
 
@@ -569,16 +604,28 @@ pub fn execute_file_operations(
                 after_lid,
                 content: new_content_with_suffixes,
             });
-            planned_ops
-                .entry(file_state.path.clone())
-                .or_default()
-                .push(internal_op);
+            Ok((file_state.path.clone(), internal_op))
+        })();
+
+        match result {
+            Ok((path, op)) => planned_ops.entry(path).or_default().push(op),
+            Err(e) => {
+                validation_errors.push(anyhow!(
+                    "Insert request #{i} (file: '{}'): {e}",
+                    req.file_path
+                ));
+            }
         }
+    }
 
-        Ok(())
-    })();
-
-    planning_result?;
+    if !validation_errors.is_empty() {
+        let error_messages: Vec<String> = validation_errors.iter().map(|e| e.to_string()).collect();
+        return Err(anyhow!(
+            "Validation failed with {} error(s):\n- {}",
+            validation_errors.len(),
+            error_messages.join("\n- ")
+        ));
+    }
 
     // --- Phase 2: Execute the consolidated plan ---
     for (path, operations) in planned_ops {
@@ -604,3 +651,7 @@ pub fn execute_file_operations(
 
     Ok(results.join("\n\n---\n\n"))
 }
+
+#[cfg(test)]
+#[path = "file_editor_tests.rs"]
+mod file_editor_tests;

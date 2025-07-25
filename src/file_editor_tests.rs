@@ -6,7 +6,7 @@ mod tests {
     use crate::file_editor::*;
     use crate::file_state::FileState;
     use crate::file_state_manager::FileStateManager;
-    use crate::patch::{InsertOp, PatchOperation, ReplaceOp};
+
     use std::fs;
     use tempfile::Builder;
 
@@ -110,20 +110,19 @@ mod tests {
             r#"{{
                 "replaces": [
                     {{
-                        "file_path": "{}",
+                        "file_path": "{file_path}",
                         "start_anchor": {{
-                            "lid": "{}",
+                            "lid": "{lid}",
                             "line_content": "two"
                         }},
                         "end_anchor": {{
-                            "lid": "{}",
+                            "lid": "{lid}",
                             "line_content": "two"
                         }},
                         "new_content": ["2"]
                     }}
                 ]
-            }}"#,
-            file_path, lid, lid
+            }}"#
         );
 
         let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
@@ -148,20 +147,19 @@ mod tests {
             r#"{{
                 "replaces": [
                     {{
-                        "file_path": "{}",
+                        "file_path": "{file_path}",
                         "start_anchor": {{
-                            "lid": "{}",
+                            "lid": "{lid}",
                             "line_content": "  let   x    =   1;  "
                         }},
                         "end_anchor": {{
-                            "lid": "{}",
+                            "lid": "{lid}",
                             "line_content": "let x =    1;"
                         }},
                         "new_content": ["let y = 2;"]
                     }}
                 ]
-            }}"#,
-            file_path, lid, lid
+            }}"#
         );
 
         let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
@@ -186,20 +184,19 @@ mod tests {
             r#"{{
                 "replaces": [
                     {{
-                        "file_path": "{}",
+                        "file_path": "{file_path}",
                         "start_anchor": {{
-                            "lid": "{}",
+                            "lid": "{lid}",
                             "line_content": "let y = 2;"
                         }},
                         "end_anchor": {{
-                            "lid": "{}",
+                            "lid": "{lid}",
                             "line_content": "let y = 2;"
                         }},
                         "new_content": ["..."]
                     }}
                 ]
-            }}"#,
-            file_path, lid, lid
+            }}"#
         );
 
         let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
@@ -229,20 +226,19 @@ mod tests {
             r#"{{
                 "replaces": [
                     {{
-                        "file_path": "{}",
+                        "file_path": "{file_path}",
                         "start_anchor": {{
-                            "lid": "{}",
+                            "lid": "{lid}",
                             "line_content": "two"
                         }},
                         "end_anchor": {{
-                            "lid": "{}",
+                            "lid": "{lid}",
                             "line_content": "two"
                         }},
                         "new_content": []
                     }}
                 ]
-            }}"#,
-            file_path, lid, lid
+            }}"#
         );
 
         let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
@@ -264,7 +260,11 @@ mod tests {
 
         let source_state = manager.open_file(&source_path).unwrap();
         let source_lid_to_move = get_lid_for_line(source_state, 1);
-        let original_suffix = source_lid_to_move.split('_').last().unwrap().to_string();
+        let original_suffix = source_lid_to_move
+            .split('_')
+            .next_back()
+            .unwrap()
+            .to_string();
 
         let dest_state = manager.open_file(&dest_path).unwrap();
         let dest_lid = get_lid_for_line(dest_state, 0);
@@ -273,26 +273,24 @@ mod tests {
             r#"{{
                 "moves": [
                     {{
-                        "op": "move",
-                        "source_file_path": "{}",
+                        "source_file_path": "{source_path}",
                         "source_start_anchor": {{
-                            "lid": "{}",
+                            "lid": "{source_lid_to_move}",
                             "line_content": "line to move"
                         }},
                         "source_end_anchor": {{
-                            "lid": "{}",
+                            "lid": "{source_lid_to_move}",
                             "line_content": "line to move"
                         }},
-                        "dest_file_path": "{}",
+                        "dest_file_path": "{dest_path}",
                         "dest_at_position": "after_anchor",
                         "dest_anchor": {{
-                            "lid": "{}",
+                            "lid": "{dest_lid}",
                             "line_content": "dest line 1"
                         }}
                     }}
                 ]
-            }}"#,
-            source_path, source_lid_to_move, source_lid_to_move, dest_path, dest_lid
+            }}"#
         );
 
         let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
@@ -353,106 +351,52 @@ mod tests {
         let file1_state = manager.open_file(&file1_path).unwrap();
         let file1_lid = get_lid_for_line(file1_state, 0);
 
-        let request_json = format!(
-            r#"{{
-                "inserts": [
-                    {{
-                        "file_path": "{file1_path}",
-                        "new_content": ["file1 line2"],
-                        "at_position": "after_anchor",
-                        "anchor": {{
-                            "lid": "{file1_lid}",
-                            "line_content": "file1 line1"
-                        }}
-                    }}
-                ],
-                "replaces": [
-                    {{
-                        "file_path": "{file2_path}",
-                        "start_anchor": {{
-                            "lid": "any_lid",
-                            "line_content": "THIS IS WRONG"
-                        }},
-                        "end_anchor": {{
-                            "lid": "any_lid",
-                            "line_content": "THIS IS WRONG"
-                        }},
-                        "new_content": ["..."]
-                    }}
-                ]
-            }}"#
-        );
+        // This request includes a valid insert and an invalid replace.
+        // The entire batch should fail.
+        let request = TopLevelRequest {
+            inserts: vec![InsertRequest {
+                file_path: file1_path.clone(),
+                new_content: vec!["file1 line2".to_string()],
+                at_position: Position::AfterAnchor,
+                anchor: Some(Anchor {
+                    lid: file1_lid,
+                    line_content: "file1 line1".to_string(),
+                }),
+            }],
+            replaces: vec![ReplaceRequest {
+                file_path: file2_path.clone(),
+                start_anchor: Anchor {
+                    lid: "lid-bad1_xxx".to_string(), // Invalid LID
+                    line_content: "THIS IS WRONG".to_string(),
+                },
+                end_anchor: Anchor {
+                    lid: "lid-bad2_yyy".to_string(), // Invalid LID
+                    line_content: "THIS IS WRONG".to_string(),
+                },
+                new_content: vec!["...".to_string()],
+            }],
+            moves: vec![],
+            copies: vec![],
+        };
 
-        let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
-        let result = execute_file_operations(&args, &mut manager, &accessible_paths);
+        let result = execute_file_operations(&request, &mut manager, &accessible_paths);
 
         assert!(result.is_err());
+
+        // Check that the error message contains the expected failure.
         let error = result.unwrap_err();
+        assert!(error.to_string().contains("Replace request #0"));
         assert!(
             error
                 .to_string()
-                .contains("Invalid LID format: must start with 'lid-'")
+                .contains("Invalid FractionalIndex format in LID: 'bad1'")
         );
 
+        // Verify no changes were made to either file
         let file1_content = fs::read_to_string(&file1_path).unwrap();
         assert_eq!(file1_content, "file1 line1");
         let file2_content = fs::read_to_string(&file2_path).unwrap();
         assert_eq!(file2_content, "file2 line1");
-    }
-
-    #[test]
-    fn test_execute_operations_respects_fixed_order() {
-        let (_tmp_dir, file_path) = setup_test_file("line B");
-        let mut manager = FileStateManager::new();
-        // This request tries to insert after "line C", which only exists *after*
-        // the replace operation has been planned. It also deletes line B.
-        // If inserts were not last, this would fail.
-        //
-        // We can't actually test this fully because we can't get the LID of a line
-        // that will be created in the same operation. However, we can simulate the
-        // intended logic and ensure the final state is what we expect from the
-        // hardcoded execution order (replaces then inserts).
-
-        let initial_state = manager.open_file(&file_path).unwrap();
-        let lid_b_idx = initial_state.lines.keys().next().unwrap().clone();
-
-        let replace_op = PatchOperation::Replace(ReplaceOp {
-            start_lid: lid_b_idx.clone(),
-            end_lid: lid_b_idx,
-            content: vec![
-                ("line A".to_string(), "rand1".to_string()),
-                ("line C".to_string(), "rand2".to_string()),
-            ],
-        });
-
-        // Manually apply the first part of the plan
-        manager
-            .get_file_state_mut(&file_path)
-            .unwrap()
-            .apply_patch(&[replace_op])
-            .unwrap();
-
-        let state_after_replace = manager.get_file_state_mut(&file_path).unwrap();
-        let (lid_c_idx, _) = state_after_replace
-            .lines
-            .iter()
-            .find(|(_, (v, _))| *v == "line C")
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .unwrap();
-
-        let insert_op = PatchOperation::Insert(InsertOp {
-            after_lid: Some(lid_c_idx),
-            content: vec![("line D".to_string(), "rand3".to_string())],
-        });
-
-        manager
-            .get_file_state_mut(&file_path)
-            .unwrap()
-            .apply_and_write_patch(&[insert_op])
-            .unwrap();
-
-        let final_content = fs::read_to_string(&file_path).unwrap();
-        assert_eq!(final_content, "line A\nline C\nline D");
     }
 
     #[test]
@@ -526,4 +470,163 @@ mod tests {
         let error = result.unwrap_err();
         assert!(error.to_string().contains("anchor suffix mismatch"));
     }
+}
+
+use crate::file_editor::{
+    Anchor, CopyRequest, InsertRequest, MoveRequest, Position, ReplaceRequest, TopLevelRequest,
+    execute_file_operations,
+};
+use crate::file_state::FileState;
+use crate::file_state_manager::FileStateManager;
+use anyhow::Result;
+use std::fs;
+use tempfile::tempdir;
+
+fn get_lid(file_state: &FileState, line_index: usize) -> String {
+    let (lid, (_, suffix)) = file_state.lines.iter().nth(line_index).unwrap();
+    format!("lid-{}_{}", lid.to_string(), suffix)
+}
+
+#[test]
+fn execute_operations_with_multiple_failures_reports_all_errors() -> Result<()> {
+    // 1. Setup
+    let tmp_dir = tempdir()?;
+    let mut file_state_manager = FileStateManager::new();
+
+    let file_path1 = tmp_dir.path().join("test1.txt");
+    fs::write(&file_path1, "line one\nline two")?;
+    let accessible_paths = vec![
+        file_path1.to_str().unwrap().to_string(),
+        tmp_dir
+            .path()
+            .join("test2.txt")
+            .to_str()
+            .unwrap()
+            .to_string(),
+    ];
+    let file_path1_str = file_path1.to_str().unwrap();
+
+    // Create file 1
+    let file_state1_ro = file_state_manager.open_file(file_path1_str)?;
+    let lid1_1 = get_lid(file_state1_ro, 0); // lid for "line one"
+    let lid1_2 = get_lid(file_state1_ro, 1); // lid for "line two"
+
+    // Create file 2
+    let file_path2 = tmp_dir.path().join("test2.txt");
+    fs::write(&file_path2, "another line")?;
+    let file_path2_str = file_path2.to_str().unwrap();
+    let _ = file_state_manager.open_file(file_path2_str)?;
+
+    // 2. Define a request with multiple invalid operations
+    let args = TopLevelRequest {
+        // --- VALID --- a simple insert to ensure valid ops are ignored when others fail
+        inserts: vec![
+            // --- FAILURE 2 ---
+            InsertRequest {
+                file_path: file_path1_str.to_string(),
+                new_content: vec!["a new line".to_string()],
+                at_position: Position::AfterAnchor,
+                anchor: Some(Anchor {
+                    lid: "lid-9999-xyz".to_string(), // Invalid LID
+                    line_content: "line two".to_string(),
+                }),
+            },
+        ],
+        replaces: vec![
+            // --- FAILURE 1 ---
+            ReplaceRequest {
+                file_path: file_path1_str.to_string(),
+                start_anchor: Anchor {
+                    lid: lid1_1.clone(),
+                    line_content: "WRONG content".to_string(), // Invalid content
+                },
+                end_anchor: Anchor {
+                    lid: lid1_1.clone(),
+                    line_content: "line one".to_string(),
+                },
+                new_content: vec![],
+            },
+        ],
+        moves: vec![
+            // --- FAILURE 4 ---
+            MoveRequest {
+                source_file_path: file_path1_str.to_string(),
+                source_start_anchor: Anchor {
+                    lid: lid1_2.clone(),
+                    line_content: "line two".to_string(),
+                },
+                source_end_anchor: Anchor {
+                    lid: lid1_2.clone(),
+                    line_content: "WRONG content for move".to_string(), // Invalid content
+                },
+                dest_file_path: file_path2_str.to_string(),
+                dest_at_position: Position::EndOfFile,
+                dest_anchor: None,
+            },
+        ],
+        copies: vec![
+            // --- FAILURE 3 ---
+            CopyRequest {
+                source_file_path: "non_existent_file.txt".to_string(), // Invalid file
+                source_start_anchor: Anchor {
+                    lid: "lid-0000_xxx".to_string(),
+                    line_content: "any".to_string(),
+                },
+                source_end_anchor: Anchor {
+                    lid: "lid-0000_yyy".to_string(),
+                    line_content: "any".to_string(),
+                },
+                dest_file_path: file_path2_str.to_string(),
+                dest_at_position: Position::StartOfFile,
+                dest_anchor: None,
+            },
+        ],
+    };
+
+    // 3. Execution & Assertions
+    let result = execute_file_operations(&args, &mut file_state_manager, &accessible_paths);
+
+    // Assert that the function returns an Err
+    assert!(result.is_err());
+
+    if let Err(e) = result {
+        let error_string = e.to_string();
+        println!("Error string: {error_string}");
+
+        // Check that the error message contains the expected number of errors
+        assert!(error_string.starts_with("Validation failed with 4 error(s):"));
+
+        // Check for specific failure messages
+        assert!(error_string.contains("Copy request #0 (source: 'non_existent_file.txt')"));
+        assert!(error_string.contains("Operation on path 'non_existent_file.txt' is not allowed."));
+
+        assert!(error_string.contains(&format!(
+            "Move request #0 (source: '{file_path1_str}', dest: '{file_path2_str}')"
+        ),));
+        assert!(error_string.contains("source_end_anchor content mismatch"));
+
+        assert!(error_string.contains(&format!("Replace request #0 (file: '{file_path1_str}')")));
+        assert!(error_string.contains("start_anchor content mismatch"));
+
+        assert!(error_string.contains(&format!("Insert request #0 (file: '{file_path1_str}')")));
+        assert!(
+            error_string
+                .contains("Invalid LID format: must be 'lid-index_suffix'. Got: 'lid-9999-xyz'")
+        );
+    } else {
+        panic!("Expected an error, but got Ok");
+    }
+
+    // Assert that no changes were written to the files
+    let file1_content = file_state_manager
+        .open_file(file_path1_str)?
+        .get_full_content();
+    assert_eq!(file1_content, "line one\nline two");
+
+    let file2_content = file_state_manager
+        .open_file(file_path2_str)?
+        .get_full_content();
+    assert_eq!(file2_content, "another line");
+
+    Ok(())
 }

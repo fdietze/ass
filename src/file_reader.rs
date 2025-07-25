@@ -239,19 +239,16 @@ mod tests {
 
         assert!(result.contains(&format!("Hash: {short_hash}")));
         assert!(result.contains("Lines: 1-3/3"));
-        assert!(
-            result.contains(&format!(
+        assert!(result.contains(&format!(
                 "1    lid-{}_{}",
                 indexes[0],
                 file_state
                     .lines
-                    .get(&file_state.lines.keys().nth(0).unwrap().clone())
+                    .get(&file_state.lines.keys().next().unwrap().clone())
                     .unwrap()
                     .1
-            ))
-        );
-        assert!(
-            result.contains(&format!(
+            )));
+        assert!(result.contains(&format!(
                 "2    lid-{}_{}",
                 indexes[1],
                 file_state
@@ -259,10 +256,8 @@ mod tests {
                     .get(&file_state.lines.keys().nth(1).unwrap().clone())
                     .unwrap()
                     .1
-            ))
-        );
-        assert!(
-            result.contains(&format!(
+            )));
+        assert!(result.contains(&format!(
                 "3    lid-{}_{}",
                 indexes[2],
                 file_state
@@ -270,8 +265,7 @@ mod tests {
                     .get(&file_state.lines.keys().nth(2).unwrap().clone())
                     .unwrap()
                     .1
-            ))
-        );
+            )));
     }
 
     #[test]
@@ -297,8 +291,7 @@ mod tests {
         let indexes: Vec<_> = file_state.lines.keys().map(|k| k.to_string()).collect();
         assert!(result.contains("Lines: 2-4/5"));
         assert!(!result.contains("1    "));
-        assert!(
-            result.contains(&format!(
+        assert!(result.contains(&format!(
                 "2    lid-{}_{}",
                 indexes[1],
                 file_state
@@ -306,10 +299,8 @@ mod tests {
                     .get(&file_state.lines.keys().nth(1).unwrap().clone())
                     .unwrap()
                     .1
-            ))
-        );
-        assert!(
-            result.contains(&format!(
+            )));
+        assert!(result.contains(&format!(
                 "3    lid-{}_{}",
                 indexes[2],
                 file_state
@@ -317,10 +308,8 @@ mod tests {
                     .get(&file_state.lines.keys().nth(2).unwrap().clone())
                     .unwrap()
                     .1
-            ))
-        );
-        assert!(
-            result.contains(&format!(
+            )));
+        assert!(result.contains(&format!(
                 "4    lid-{}_{}",
                 indexes[3],
                 file_state
@@ -328,8 +317,7 @@ mod tests {
                     .get(&file_state.lines.keys().nth(3).unwrap().clone())
                     .unwrap()
                     .1
-            ))
-        );
+            )));
         assert!(!result.contains("5    "));
     }
 
@@ -363,8 +351,7 @@ mod tests {
 
         assert!(result.contains("Lines: 2-3, 8-9/10"));
         assert!(!result.contains("1    "));
-        assert!(
-            result.contains(&format!(
+        assert!(result.contains(&format!(
                 "2    lid-{}_{}",
                 indexes[1],
                 file_state
@@ -372,10 +359,8 @@ mod tests {
                     .get(&file_state.lines.keys().nth(1).unwrap().clone())
                     .unwrap()
                     .1
-            ))
-        );
-        assert!(
-            result.contains(&format!(
+            )));
+        assert!(result.contains(&format!(
                 "3    lid-{}_{}",
                 indexes[2],
                 file_state
@@ -383,12 +368,10 @@ mod tests {
                     .get(&file_state.lines.keys().nth(2).unwrap().clone())
                     .unwrap()
                     .1
-            ))
-        );
+            )));
         assert!(!result.contains("4    "));
         assert!(!result.contains("7    "));
-        assert!(
-            result.contains(&format!(
+        assert!(result.contains(&format!(
                 "8    lid-{}_{}",
                 indexes[7],
                 file_state
@@ -396,10 +379,8 @@ mod tests {
                     .get(&file_state.lines.keys().nth(7).unwrap().clone())
                     .unwrap()
                     .1
-            ))
-        );
-        assert!(
-            result.contains(&format!(
+            )));
+        assert!(result.contains(&format!(
                 "9    lid-{}_{}",
                 indexes[8],
                 file_state
@@ -407,8 +388,7 @@ mod tests {
                     .get(&file_state.lines.keys().nth(8).unwrap().clone())
                     .unwrap()
                     .1
-            ))
-        );
+            )));
         assert!(!result.contains("10   "));
     }
 

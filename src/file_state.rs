@@ -401,15 +401,13 @@ impl FileState {
             anyhow!("Invalid LID format: must start with 'lid-'. Got: '{lid_str}'")
         })?;
 
-        let parts: Vec<&str> = stripped.split('_').collect();
-        if parts.len() != 2 {
+        let parts: Option<(&str, &str)> = stripped.rsplit_once('_');
+        if parts.is_none() {
             return Err(anyhow!(
                 "Invalid LID format: must be 'lid-index_suffix'. Got: '{lid_str}'"
             ));
         }
-
-        let index_part = parts[0];
-        let suffix_part = parts[1];
+        let (index_part, suffix_part) = parts.unwrap();
 
         let index = FractionalIndex::from_string(index_part)
             .map_err(|_| anyhow!("Invalid FractionalIndex format in LID: '{index_part}'"))?;

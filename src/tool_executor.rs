@@ -79,7 +79,11 @@ pub async fn handle_tool_call(
                 tool_call_id,
                 "executing command",
                 |args: shell::ShellCommandArgs| async move {
-                    shell::execute_shell_command(&args.command, &config_clone.allowed_command_prefixes).await
+                    shell::execute_shell_command(
+                        &args.command,
+                        &config_clone.allowed_command_prefixes,
+                    )
+                    .await
                 },
             )
             .await
