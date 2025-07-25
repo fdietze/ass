@@ -43,12 +43,12 @@ The output for each created file has the same format as the `read_file` tool, in
 Example `create_file` output for a new file `new.txt`:
 ```
 File: new.txt | Hash: a1b2c3d4 | Lines: 1-2/2
-1    80: first line
-2    c0: second line
+1    lid-80: first line
+2    lid-c0: second line
 ```
 
 **How to Use the Output**:
-When you want to edit this new file later, you must use the LIDs (`80`, `c0`) and the hash (`a1b2c3d4`) in your `edit_file` call.
+When you want to edit this new file later, you must use the LIDs (`lid-80`, `lid-c0`) and the hash (`a1b2c3d4`) in your `edit_file` call.
 
 If the file content comes from another file, instead of creating a file with the content, create an empty file and then use the move operation to move specific lines from the source file to the new file.
 "
@@ -159,8 +159,8 @@ mod tests {
         assert!(result.contains(&format!("File: {file_path_str}")));
         let file_state = manager.open_file(&file_path_str).unwrap();
         let indexes: Vec<_> = file_state.lines.keys().map(|k| k.to_string()).collect();
-        assert!(result.contains(&format!("{}: hello", indexes[0])));
-        assert!(result.contains(&format!("{}: world", indexes[1])));
+        assert!(result.contains(&format!("lid-{}: hello", indexes[0])));
+        assert!(result.contains(&format!("lid-{}: world", indexes[1])));
         assert!(result.contains("Hash:"));
 
         let disk_content = fs::read_to_string(file_path).unwrap();

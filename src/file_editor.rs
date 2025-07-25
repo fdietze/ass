@@ -131,7 +131,7 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                     "title": "Source Start Anchor",
                                     "description": "An anchor to uniquely identify the first line in the source range.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line." },
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
                                         "line_content": {
                                             "type": "string",
                                             "description": "The exact, single-line content of the anchor line. This field MUST NOT contain newlines and is used for validation only.",
@@ -145,7 +145,7 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                     "title": "Source End Anchor",
                                     "description": "An anchor to uniquely identify the last line in the source range.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line." },
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
                                         "line_content": {
                                             "type": "string",
                                             "description": "The exact, single-line content of the anchor line. This field MUST NOT contain newlines and is used for validation only.",
@@ -161,7 +161,7 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                     "title": "Destination Anchor",
                                     "description": "An anchor to uniquely identify the destination line. Required only when 'dest_at_position' is 'after_anchor'.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line." },
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
                                         "line_content": {
                                             "type": "string",
                                             "description": "The exact, single-line content of the anchor line. This field MUST NOT contain newlines and is used for validation only.",
@@ -187,7 +187,7 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                     "title": "Source Start Anchor",
                                     "description": "An anchor to uniquely identify the first line in the source range.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line." },
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
                                         "line_content": {
                                             "type": "string",
                                             "description": "The exact, single-line content of the anchor line. This field MUST NOT contain newlines and is used for validation only.",
@@ -201,7 +201,7 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                     "title": "Source End Anchor",
                                     "description": "An anchor to uniquely identify the last line in the source range.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line." },
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
                                         "line_content": {
                                             "type": "string",
                                             "description": "The exact, single-line content of the anchor line. This field MUST NOT contain newlines and is used for validation only.",
@@ -217,7 +217,7 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                     "title": "Destination Anchor",
                                     "description": "An anchor to uniquely identify the destination line. Required only when 'dest_at_position' is 'after_anchor'.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line." },
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
                                         "line_content": {
                                             "type": "string",
                                             "description": "The exact, single-line content of the anchor line. This field MUST NOT contain newlines and is used for validation only.",
@@ -243,7 +243,7 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                     "title": "Start Anchor",
                                     "description": "An anchor to uniquely identify the first line in the range to replace.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line." },
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
                                         "line_content": {
                                             "type": "string",
                                             "description": "The exact, single-line content of the anchor line. This field MUST NOT contain newlines and is used for validation only.",
@@ -257,7 +257,7 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                     "title": "End Anchor",
                                     "description": "An anchor to uniquely identify the last line in the range to replace. For a single-line operation, this should be the same as 'start_anchor'.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line." },
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
                                         "line_content": {
                                             "type": "string",
                                             "description": "The exact, single-line content of the anchor line. This field MUST NOT contain newlines and is used for validation only.",
@@ -286,7 +286,7 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                     "title": "Anchor",
                                     "description": "An anchor to uniquely identify the line to insert after. Required only when 'at_position' is 'after_anchor'.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line." },
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
                                         "line_content": {
                                             "type": "string",
                                             "description": "The exact, single-line content of the anchor line. This field MUST NOT contain newlines and is used for validation only.",

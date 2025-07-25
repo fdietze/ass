@@ -33,7 +33,7 @@ mod tests {
                         "new_content": ["line 2"],
                         "at_position": "after_anchor",
                         "anchor": {{
-                            "lid": "{lid_line_1}",
+                            "lid": "lid-{lid_line_1}",
                             "line_content": "line 1"
                         }}
                     }}
@@ -66,7 +66,7 @@ mod tests {
                         "new_content": ["line 2"],
                         "at_position": "after_anchor",
                         "anchor": {{
-                            "lid": "{lid_line_1}",
+                            "lid": "lid-{lid_line_1}",
                             "line_content": "WRONG content"
                         }}
                     }}
@@ -105,11 +105,11 @@ mod tests {
                     {{
                         "file_path": "{}",
                         "start_anchor": {{
-                            "lid": "{}",
+                            "lid": "lid-{}",
                             "line_content": "two"
                         }},
                         "end_anchor": {{
-                            "lid": "{}",
+                            "lid": "lid-{}",
                             "line_content": "two"
                         }},
                         "new_content": ["2"]
@@ -142,11 +142,11 @@ mod tests {
                     {{
                         "file_path": "{}",
                         "start_anchor": {{
-                            "lid": "{}",
+                            "lid": "lid-{}",
                             "line_content": "two"
                         }},
                         "end_anchor": {{
-                            "lid": "{}",
+                            "lid": "lid-{}",
                             "line_content": "two"
                         }},
                         "new_content": []
@@ -186,17 +186,17 @@ mod tests {
                         "op": "move",
                         "source_file_path": "{}",
                         "source_start_anchor": {{
-                            "lid": "{}",
+                            "lid": "lid-{}",
                             "line_content": "line to move"
                         }},
                         "source_end_anchor": {{
-                            "lid": "{}",
+                            "lid": "lid-{}",
                             "line_content": "line to move"
                         }},
                         "dest_file_path": "{}",
                         "dest_at_position": "after_anchor",
                         "dest_anchor": {{
-                            "lid": "{}",
+                            "lid": "lid-{}",
                             "line_content": "dest line 1"
                         }}
                     }}
@@ -266,7 +266,7 @@ mod tests {
                         "new_content": ["file1 line2"],
                         "at_position": "after_anchor",
                         "anchor": {{
-                            "lid": "{file1_lid}",
+                            "lid": "lid-{file1_lid}",
                             "line_content": "file1 line1"
                         }}
                     }}
@@ -293,7 +293,11 @@ mod tests {
 
         assert!(result.is_err());
         let error = result.unwrap_err();
-        assert!(error.to_string().contains("Invalid index format: any_lid"));
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid LID format: must start with 'lid-'")
+        );
 
         let file1_content = fs::read_to_string(&file1_path).unwrap();
         assert_eq!(file1_content, "file1 line1");
@@ -351,5 +355,42 @@ mod tests {
 
         let final_content = fs::read_to_string(&file_path).unwrap();
         assert_eq!(final_content, "line A\nline C\nline D");
+    }
+
+    #[test]
+    fn test_execute_fails_with_unprefixed_lid() {
+        let (_tmp_dir, file_path) = setup_test_file("line 1");
+        let mut manager = FileStateManager::new();
+        let accessible_paths = vec![_tmp_dir.path().to_str().unwrap().to_string()];
+
+        let initial_state = manager.open_file(&file_path).unwrap();
+        let lid_line_1 = initial_state.lines.keys().next().unwrap().to_string();
+
+        let request_json = format!(
+            r#"{{
+                "inserts": [
+                    {{
+                        "file_path": "{file_path}",
+                        "new_content": ["line 2"],
+                        "at_position": "after_anchor",
+                        "anchor": {{
+                            "lid": "{lid_line_1}",
+                            "line_content": "line 1"
+                        }}
+                    }}
+                ]
+            }}"#
+        );
+
+        let args: TopLevelRequest = serde_json::from_str(&request_json).unwrap();
+        let result = execute_file_operations(&args, &mut manager, &accessible_paths);
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid LID format: must start with 'lid-'")
+        );
     }
 }

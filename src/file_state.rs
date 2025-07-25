@@ -245,7 +245,7 @@ impl FileState {
                     .enumerate()
                     .map(|(i, (index, content))| {
                         let line_num = i + 1;
-                        format!("{line_num:<5}{}: {content}", index.to_string())
+                        format!("{line_num:<5}lid-{}: {content}", index.to_string())
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
@@ -283,7 +283,7 @@ impl FileState {
                         .enumerate()
                         .map(|(line_offset, (index, content))| {
                             let line_num = start_idx + line_offset + 1;
-                            format!("{line_num:<5}{}: {content}", index.to_string())
+                            format!("{line_num:<5}lid-{}: {content}", index.to_string())
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -367,9 +367,16 @@ impl FileState {
         content
     }
 
-    /// Parses a string like "LID1234" into its numeric form `1234`.
+    /// Parses a string like "lid-..." into its `FractionalIndex` form.
     pub fn parse_index(index_str: &str) -> Result<FractionalIndex> {
-        FractionalIndex::from_string(index_str)
-            .map_err(|_| anyhow!("Invalid index format: {index_str}"))
+        if let Some(stripped) = index_str.strip_prefix("lid-") {
+            FractionalIndex::from_string(stripped).map_err(|_| {
+                anyhow!("Invalid FractionalIndex format after stripping 'lid-': '{stripped}'")
+            })
+        } else {
+            Err(anyhow!(
+                "Invalid LID format: must start with 'lid-'. Got: '{index_str}'"
+            ))
+        }
     }
 }

@@ -60,7 +60,7 @@ fn test_apply_and_write_patch() {
     // Check diff
     assert!(
         diff.contains(
-            &style(format!("+ {}: line 2", inserted_index.to_string()))
+            &style(format!("+ lid-{}: line 2", inserted_index.to_string()))
                 .green()
                 .to_string()
         )

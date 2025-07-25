@@ -62,8 +62,8 @@ File: jokes.txt | Hash: 931d3b24 | Lines: 1-1/1
 
 **How to Use the Output**:
 - The first number (`1`) is the line number, for display only.
-- The second value (`80`) is the Line Identifier (LID).
-- When using `edit_file`, you MUST provide the LID (e.g., `80`), not the line number (`1`)."#
+- The second value (`lid-80`) is the Line Identifier (LID).
+- When using `edit_file`, you MUST provide the full LID including the prefix (e.g., `lid-80`), not the line number (`1`)."#
                     .to_string(),
             ),
             parameters: serde_json::json!({
@@ -239,9 +239,9 @@ mod tests {
 
         assert!(result.contains(&format!("Hash: {short_hash}")));
         assert!(result.contains("Lines: 1-3/3"));
-        assert!(result.contains(&format!("1    {}: line 1", indexes[0])));
-        assert!(result.contains(&format!("2    {}: line 2", indexes[1])));
-        assert!(result.contains(&format!("3    {}: line 3", indexes[2])));
+        assert!(result.contains(&format!("1    lid-{}: line 1", indexes[0])));
+        assert!(result.contains(&format!("2    lid-{}: line 2", indexes[1])));
+        assert!(result.contains(&format!("3    lid-{}: line 3", indexes[2])));
     }
 
     #[test]
@@ -267,9 +267,9 @@ mod tests {
         let indexes: Vec<_> = file_state.lines.keys().map(|k| k.to_string()).collect();
         assert!(result.contains("Lines: 2-4/5"));
         assert!(!result.contains("1    "));
-        assert!(result.contains(&format!("2    {}: 2", indexes[1])));
-        assert!(result.contains(&format!("3    {}: 3", indexes[2])));
-        assert!(result.contains(&format!("4    {}: 4", indexes[3])));
+        assert!(result.contains(&format!("2    lid-{}: 2", indexes[1])));
+        assert!(result.contains(&format!("3    lid-{}: 3", indexes[2])));
+        assert!(result.contains(&format!("4    lid-{}: 4", indexes[3])));
         assert!(!result.contains("5    "));
     }
 
@@ -303,12 +303,12 @@ mod tests {
 
         assert!(result.contains("Lines: 2-3, 8-9/10"));
         assert!(!result.contains("1    "));
-        assert!(result.contains(&format!("2    {}: 2", indexes[1])));
-        assert!(result.contains(&format!("3    {}: 3", indexes[2])));
+        assert!(result.contains(&format!("2    lid-{}: 2", indexes[1])));
+        assert!(result.contains(&format!("3    lid-{}: 3", indexes[2])));
         assert!(!result.contains("4    "));
         assert!(!result.contains("7    "));
-        assert!(result.contains(&format!("8    {}: 8", indexes[7])));
-        assert!(result.contains(&format!("9    {}: 9", indexes[8])));
+        assert!(result.contains(&format!("8    lid-{}: 8", indexes[7])));
+        assert!(result.contains(&format!("9    lid-{}: 9", indexes[8])));
         assert!(!result.contains("10   "));
     }
 

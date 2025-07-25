@@ -44,7 +44,7 @@ pub fn generate_custom_diff(
                         if old_normalized == new_normalized {
                             // Whitespace-only change found. Print the new line as neutral.
                             diff_lines.push(format!(
-                                "  {}: {}",
+                                "  lid-{}: {}",
                                 new_keys[new_range.start].to_string(),
                                 new_line
                             ));
@@ -55,41 +55,57 @@ pub fn generate_custom_diff(
 
                     for i in old_range {
                         diff_lines.push(
-                            style(format!("- {}: {}", old_keys[i].to_string(), old_content[i]))
-                                .red()
-                                .to_string(),
+                            style(format!(
+                                "- lid-{}: {}",
+                                old_keys[i].to_string(),
+                                old_content[i]
+                            ))
+                            .red()
+                            .to_string(),
                         );
                     }
                     for i in new_range {
                         diff_lines.push(
-                            style(format!("+ {}: {}", new_keys[i].to_string(), new_content[i]))
-                                .green()
-                                .to_string(),
+                            style(format!(
+                                "+ lid-{}: {}",
+                                new_keys[i].to_string(),
+                                new_content[i]
+                            ))
+                            .green()
+                            .to_string(),
                         );
                     }
                 }
                 DiffTag::Delete => {
                     for i in old_range {
                         diff_lines.push(
-                            style(format!("- {}: {}", old_keys[i].to_string(), old_content[i]))
-                                .red()
-                                .to_string(),
+                            style(format!(
+                                "- lid-{}: {}",
+                                old_keys[i].to_string(),
+                                old_content[i]
+                            ))
+                            .red()
+                            .to_string(),
                         );
                     }
                 }
                 DiffTag::Insert => {
                     for i in new_range {
                         diff_lines.push(
-                            style(format!("+ {}: {}", new_keys[i].to_string(), new_content[i]))
-                                .green()
-                                .to_string(),
+                            style(format!(
+                                "+ lid-{}: {}",
+                                new_keys[i].to_string(),
+                                new_content[i]
+                            ))
+                            .green()
+                            .to_string(),
                         );
                     }
                 }
                 DiffTag::Equal => {
                     for i in new_range {
                         diff_lines.push(format!(
-                            "  {}: {}",
+                            "  lid-{}: {}",
                             new_keys[i].to_string(),
                             new_content[i]
                         ));
@@ -147,17 +163,21 @@ mod tests {
         // All changes are contiguous in the master key list, so they form one hunk.
         // Removals first, then additions.
         let expected_lines = [
-            format!("  {}: {}", idx[0].to_string(), "line 1"),
-            style(format!("- {}: {}", idx[1].to_string(), "line 2"))
+            format!("  lid-{}: {}", idx[0].to_string(), "line 1"),
+            style(format!("- lid-{}: {}", idx[1].to_string(), "line 2"))
                 .red()
                 .to_string(), // Deletion
-            style(format!("- {}: {}", idx[2].to_string(), "line 3"))
+            style(format!("- lid-{}: {}", idx[2].to_string(), "line 3"))
                 .red()
                 .to_string(), // Modification (old)
-            style(format!("+ {}: {}", idx[2].to_string(), "line 3 modified"))
-                .green()
-                .to_string(), // Modification (new)
-            style(format!("+ {}: {}", idx[3].to_string(), "line 4 added"))
+            style(format!(
+                "+ lid-{}: {}",
+                idx[2].to_string(),
+                "line 3 modified"
+            ))
+            .green()
+            .to_string(), // Modification (new)
+            style(format!("+ lid-{}: {}", idx[3].to_string(), "line 4 added"))
                 .green()
                 .to_string(), // Addition
         ];
@@ -180,7 +200,7 @@ mod tests {
 
         // The neutral line is treated as an "addition" in the hunk.
         let expected_diff = format!(
-            "  {}: {}\n  {}: {}",
+            "  lid-{}: {}\n  lid-{}: {}",
             idx[0].to_string(),
             "line 1",
             idx[1].to_string(),
@@ -208,17 +228,17 @@ mod tests {
         let diff = generate_custom_diff(&old_lines, &new_lines);
 
         let expected_lines = [
-            format!("  {}: {}", idx[0].to_string(), "line A"),
-            style(format!("- {}: {}", idx[1].to_string(), "line B"))
+            format!("  lid-{}: {}", idx[0].to_string(), "line A"),
+            style(format!("- lid-{}: {}", idx[1].to_string(), "line B"))
                 .red()
                 .to_string(),
-            style(format!("- {}: {}", idx[2].to_string(), "line C"))
+            style(format!("- lid-{}: {}", idx[2].to_string(), "line C"))
                 .red()
                 .to_string(),
-            style(format!("+ {}: {}", new_idx.to_string(), "line X"))
+            style(format!("+ lid-{}: {}", new_idx.to_string(), "line X"))
                 .green()
                 .to_string(),
-            format!("  {}: {}", idx[3].to_string(), "line D"),
+            format!("  lid-{}: {}", idx[3].to_string(), "line D"),
         ];
         let expected_diff = expected_lines.join("\n");
 
@@ -244,19 +264,19 @@ mod tests {
 
         let expected_lines = [
             // Hunk 1
-            style(format!("- {}: {}", idx[0].to_string(), "hunk 1 old"))
+            style(format!("- lid-{}: {}", idx[0].to_string(), "hunk 1 old"))
                 .red()
                 .to_string(),
-            style(format!("+ {}: {}", new_idx1.to_string(), "hunk 1 new"))
+            style(format!("+ lid-{}: {}", new_idx1.to_string(), "hunk 1 new"))
                 .green()
                 .to_string(),
             // Context
-            format!("  {}: {}", idx[1].to_string(), "unchanged"),
+            format!("  lid-{}: {}", idx[1].to_string(), "unchanged"),
             // Hunk 2
-            style(format!("- {}: {}", idx[2].to_string(), "hunk 2 old"))
+            style(format!("- lid-{}: {}", idx[2].to_string(), "hunk 2 old"))
                 .red()
                 .to_string(),
-            style(format!("+ {}: {}", new_idx2.to_string(), "hunk 2 new"))
+            style(format!("+ lid-{}: {}", new_idx2.to_string(), "hunk 2 new"))
                 .green()
                 .to_string(),
         ];
@@ -285,16 +305,16 @@ mod tests {
         let diff = generate_custom_diff(&old_lines, &new_lines);
 
         let expected_lines = [
-            format!("  {}: {}", idx[0].to_string(), "context 1"),
-            format!("  {}: {}", idx[1].to_string(), "context 2"),
-            style(format!("- {}: {}", idx[2].to_string(), "to be changed"))
+            format!("  lid-{}: {}", idx[0].to_string(), "context 1"),
+            format!("  lid-{}: {}", idx[1].to_string(), "context 2"),
+            style(format!("- lid-{}: {}", idx[2].to_string(), "to be changed"))
                 .red()
                 .to_string(),
-            style(format!("+ {}: {}", new_idx.to_string(), "was changed"))
+            style(format!("+ lid-{}: {}", new_idx.to_string(), "was changed"))
                 .green()
                 .to_string(),
-            format!("  {}: {}", idx[3].to_string(), "context 3"),
-            format!("  {}: {}", idx[4].to_string(), "context 4"),
+            format!("  lid-{}: {}", idx[3].to_string(), "context 3"),
+            format!("  lid-{}: {}", idx[4].to_string(), "context 4"),
         ];
         let expected_diff = expected_lines.join("\n");
 
@@ -322,20 +342,20 @@ mod tests {
         let diff = generate_custom_diff(&old_lines, &new_lines);
 
         let expected_lines = [
-            format!("  {}: {}", idx[0].to_string(), "context 1"),
-            style(format!("- {}: {}", idx[1].to_string(), "to change 1"))
+            format!("  lid-{}: {}", idx[0].to_string(), "context 1"),
+            style(format!("- lid-{}: {}", idx[1].to_string(), "to change 1"))
                 .red()
                 .to_string(),
-            style(format!("- {}: {}", idx[2].to_string(), "to change 2"))
+            style(format!("- lid-{}: {}", idx[2].to_string(), "to change 2"))
                 .red()
                 .to_string(),
-            style(format!("+ {}: {}", new_idx1.to_string(), "changed 1"))
+            style(format!("+ lid-{}: {}", new_idx1.to_string(), "changed 1"))
                 .green()
                 .to_string(),
-            style(format!("+ {}: {}", new_idx2.to_string(), "changed 2"))
+            style(format!("+ lid-{}: {}", new_idx2.to_string(), "changed 2"))
                 .green()
                 .to_string(),
-            format!("  {}: {}", idx[3].to_string(), "context 2"),
+            format!("  lid-{}: {}", idx[3].to_string(), "context 2"),
         ];
         let expected_diff = expected_lines.join("\n");
 
@@ -357,9 +377,9 @@ mod tests {
 
         // Should just show the new line as context, without +/-
         let expected_lines = [
-            format!("  {}: {}", idx[0].to_string(), "context"),
-            format!("  {}: {}", idx[1].to_string(), "indented"),
-            format!("  {}: {}", idx[2].to_string(), "context"),
+            format!("  lid-{}: {}", idx[0].to_string(), "context"),
+            format!("  lid-{}: {}", idx[1].to_string(), "indented"),
+            format!("  lid-{}: {}", idx[2].to_string(), "context"),
         ];
         let expected_diff = expected_lines.join("\n");
         assert_eq!(diff, expected_diff);
@@ -383,17 +403,17 @@ mod tests {
         let diff = generate_custom_diff(&old_lines, &new_lines);
 
         let expected_lines = [
-            style(format!("- {}: {}", idx[0].to_string(), "hunk 1 old"))
+            style(format!("- lid-{}: {}", idx[0].to_string(), "hunk 1 old"))
                 .red()
                 .to_string(),
-            style(format!("+ {}: {}", new_idx1.to_string(), "hunk 1 new"))
+            style(format!("+ lid-{}: {}", new_idx1.to_string(), "hunk 1 new"))
                 .green()
                 .to_string(),
-            format!("  {}: {}", idx[1].to_string(), "separator"),
-            style(format!("- {}: {}", idx[2].to_string(), "hunk 2 old"))
+            format!("  lid-{}: {}", idx[1].to_string(), "separator"),
+            style(format!("- lid-{}: {}", idx[2].to_string(), "hunk 2 old"))
                 .red()
                 .to_string(),
-            style(format!("+ {}: {}", new_idx2.to_string(), "hunk 2 new"))
+            style(format!("+ lid-{}: {}", new_idx2.to_string(), "hunk 2 new"))
                 .green()
                 .to_string(),
         ];
@@ -419,14 +439,14 @@ mod tests {
 
         let diff_start = generate_custom_diff(&old_lines, &new_lines);
         let expected_start = [
-            style(format!("- {}: {}", idx1[0].to_string(), "to change"))
+            style(format!("- lid-{}: {}", idx1[0].to_string(), "to change"))
                 .red()
                 .to_string(),
-            style(format!("+ {}: {}", new_idx1.to_string(), "changed"))
+            style(format!("+ lid-{}: {}", new_idx1.to_string(), "changed"))
                 .green()
                 .to_string(),
-            format!("  {}: {}", idx1[1].to_string(), "context 1"),
-            format!("  {}: {}", idx1[2].to_string(), "context 2"),
+            format!("  lid-{}: {}", idx1[1].to_string(), "context 1"),
+            format!("  lid-{}: {}", idx1[2].to_string(), "context 2"),
         ]
         .join("\n");
         assert_eq!(diff_start, expected_start);
@@ -446,12 +466,12 @@ mod tests {
 
         let diff_end = generate_custom_diff(&old_lines, &new_lines);
         let expected_end = [
-            format!("  {}: {}", idx2[0].to_string(), "context 1"),
-            format!("  {}: {}", idx2[1].to_string(), "context 2"),
-            style(format!("- {}: {}", idx2[2].to_string(), "to change"))
+            format!("  lid-{}: {}", idx2[0].to_string(), "context 1"),
+            format!("  lid-{}: {}", idx2[1].to_string(), "context 2"),
+            style(format!("- lid-{}: {}", idx2[2].to_string(), "to change"))
                 .red()
                 .to_string(),
-            style(format!("+ {}: {}", new_idx2.to_string(), "changed"))
+            style(format!("+ lid-{}: {}", new_idx2.to_string(), "changed"))
                 .green()
                 .to_string(),
         ]
@@ -474,16 +494,16 @@ mod tests {
         let diff = generate_custom_diff(&old_lines, &new_lines);
 
         let expected_lines = [
-            format!("  {}: {}", idx[0].to_string(), "context before"),
+            format!("  lid-{}: {}", idx[0].to_string(), "context before"),
             // The changed line should be neutral, not +/-
-            format!("  {}: {}", idx[1].to_string(), "  my_function()"),
-            format!("  {}: {}", idx[2].to_string(), "context after"),
+            format!("  lid-{}: {}", idx[1].to_string(), "  my_function()"),
+            format!("  lid-{}: {}", idx[2].to_string(), "context after"),
         ]
         .join("\n");
 
         // Explicitly check that we don't have the add/remove lines
-        assert!(!diff.contains(&format!("- {}: my_function()", idx[1].to_string())));
-        assert!(!diff.contains(&format!("+ {}:   my_function()", idx[1].to_string())));
+        assert!(!diff.contains(&format!("- lid-{}: my_function()", idx[1].to_string())));
+        assert!(!diff.contains(&format!("+ lid-{}:   my_function()", idx[1].to_string())));
 
         assert_eq!(diff, expected_lines);
     }
@@ -502,7 +522,7 @@ mod tests {
 
         // Should be treated as a whitespace-only change (neutral)
         let expected_lines = [format!(
-            "  {}: {}",
+            "  lid-{}: {}",
             idx[0].to_string(),
             "fn my_func (foo: &str) {}"
         )];
