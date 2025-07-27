@@ -54,8 +54,6 @@ pub struct TopLevelRequest {
     pub replaces: Vec<ReplaceRequest>,
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub moves: Vec<MoveRequest>,
-    #[serde(default, deserialize_with = "deserialize_null_default")]
-    pub copies: Vec<CopyRequest>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -95,17 +93,6 @@ pub struct MoveRequest {
     pub dest_anchor: Option<Anchor>,
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "snake_case")]
-pub struct CopyRequest {
-    pub source_file_path: String,
-    pub source_range_start_anchor: Anchor,
-    pub source_range_end_anchor: Anchor,
-    pub dest_file_path: String,
-    pub dest_at_position: Position,
-    pub dest_anchor: Option<Anchor>,
-}
-
 pub fn edit_file_tool_schema() -> Tool {
     Tool::Function {
         function: FunctionDescription {
@@ -116,14 +103,14 @@ After a successful edit, this tool's output provides the new file hash. You have
 
 All operations are planned based on the files' initial state. Line Anchors (LID + content) MUST be valid at the beginning of the tool call.
 
-**Execution Order**: Operations are always executed in a fixed order: 1. Copies, 2. Moves, 3. Replaces, 4. Inserts.
+**Execution Order**: Operations are always executed in a fixed order: 1. Moves, 2. Replaces, 3. Inserts.
 
 **Line Anchors**: An anchor is a combination of a line's unique identifier (`lid`) and its exact `content`. Both must be provided and must match the file exactly for an operation to succeed.
 
 **Operations**:
 - `inserts`: Adds new lines. Position can be `start_of_file`, `end_of_file`, or `after_anchor`.
 - `replaces`: Replaces a range of lines. To delete, provide an empty `new_content` array.
-- `moves` / `copies`: Transfers blocks of lines. Prefer `move` over `copy` + `delete`.
+- `moves`: Transfers blocks of lines.
 
 **Correctness**:
 - Pay special attention to balancing of parentheses, braces, and other syntax elements. Ranges should not cross these boundaries.
@@ -133,62 +120,6 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "copies": {
-                        "type": "array",
-                        "description": "A list of copy operations to perform.",
-                        "items": {
-                            "type": "object",
-                            "title": "Copy Operation",
-                            "properties": {
-                                "source_file_path": { "type": "string", "description": "Path of the file to copy lines from." },
-                                "source_range_start_anchor": {
-                                    "type": "object",
-                                    "title": "Source Range Start Anchor",
-                                    "description": "An anchor for the first line in the source range. The range is inclusive, so this line WILL be part of the copied content.",
-                                    "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
-                                        "line_content": {
-                                            "type": "string",
-                                            "description": "The exact, single-line content of the anchor line. This field MUST NOT contain newlines and is used for validation only.",
-                                            "pattern": "^[^\r\n]*$"
-                                        }
-                                    },
-                                    "required": ["lid", "line_content"]
-                                },
-                                "source_range_end_anchor": {
-                                    "type": "object",
-                                    "title": "Source Range End Anchor",
-                                    "description": "An anchor for the last line in the source range. The range is inclusive, so this line WILL be part of the copied content.",
-                                    "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
-                                        "line_content": {
-                                            "type": "string",
-                                            "description": "The exact, single-line content of the anchor line. This field MUST NOT contain newlines and is used for validation only.",
-                                            "pattern": "^[^\r\n]*$"
-                                        }
-                                    },
-                                    "required": ["lid", "line_content"]
-                                },
-                                "dest_file_path": { "type": "string", "description": "Path of the file to copy lines to." },
-                                "dest_at_position": { "enum": ["start_of_file", "end_of_file", "after_anchor"], "description": "Specifies where to insert the content in the destination file." },
-                                "dest_anchor": {
-                                    "type": "object",
-                                    "title": "Destination Anchor",
-                                    "description": "An anchor to uniquely identify the destination line. Required only when 'dest_at_position' is 'after_anchor'.",
-                                    "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
-                                        "line_content": {
-                                            "type": "string",
-                                            "description": "The exact, single-line content of the anchor line. This field MUST NOT contain newlines and is used for validation only.",
-                                            "pattern": "^[^\r\n]*$"
-                                        }
-                                    },
-                                    "required": ["lid", "line_content"]
-                                }
-                            },
-                            "required": ["source_file_path", "source_range_start_anchor", "source_range_end_anchor", "dest_file_path", "dest_at_position"]
-                        }
-                    },
                     "moves": {
                         "type": "array",
                         "description": "A list of move operations to perform.",
@@ -376,7 +307,6 @@ pub fn execute_file_operations(
     if args.inserts.is_empty()
         && args.replaces.is_empty()
         && args.moves.is_empty()
-        && args.copies.is_empty()
     {
         return Ok("No file operations provided in the tool call.".to_string());
     }
@@ -386,74 +316,7 @@ pub fn execute_file_operations(
     let mut validation_errors: Vec<anyhow::Error> = Vec::new();
 
     // --- Phase 1: Plan and Validate all operations ---
-    // The order here is fixed and documented for the LLM: copies, moves, replaces, inserts.
-
-    // Plan Copies
-    for (i, req) in args.copies.iter().enumerate() {
-        let result: Result<(PathBuf, PatchOperation)> = (|| {
-            permissions::is_path_accessible(Path::new(&req.source_file_path), accessible_paths)?;
-            permissions::is_path_accessible(Path::new(&req.dest_file_path), accessible_paths)?;
-
-            let (_source_path, content_to_transfer) = {
-                let source_state = file_state_manager.open_file(&req.source_file_path)?;
-                validate_anchor(
-                    source_state,
-                    &req.source_range_start_anchor.lid,
-                    &req.source_range_start_anchor.line_content,
-                    "copy",
-                    "source_range_start_anchor",
-                )?;
-                validate_anchor(
-                    source_state,
-                    &req.source_range_end_anchor.lid,
-                    &req.source_range_end_anchor.line_content,
-                    "copy",
-                    "source_range_end_anchor",
-                )?;
-                source_state
-                    .get_lines_in_range(
-                        &req.source_range_start_anchor.lid,
-                        &req.source_range_end_anchor.lid,
-                    )
-                    .map(|content| (source_state.path.clone(), content))?
-            };
-
-            let dest_state = file_state_manager.open_file(&req.dest_file_path)?;
-            let after_lid = match req.dest_at_position {
-                Position::StartOfFile => None,
-                Position::EndOfFile => dest_state.lines.last_key_value().map(|(k, _)| k.clone()),
-                Position::AfterAnchor => {
-                    let anchor = req.dest_anchor.as_ref().ok_or_else(|| {
-                        anyhow!("`dest_anchor` is required for `after_anchor` position.")
-                    })?;
-                    validate_anchor(
-                        dest_state,
-                        &anchor.lid,
-                        &anchor.line_content,
-                        "copy",
-                        "dest_anchor",
-                    )?;
-                    Some(FileState::parse_lid(&anchor.lid)?.0)
-                }
-            };
-
-            let insert_op = PatchOperation::Insert(InsertOp {
-                after_lid,
-                content: content_to_transfer,
-            });
-            Ok((dest_state.path.clone(), insert_op))
-        })();
-
-        match result {
-            Ok((path, op)) => planned_ops.entry(path).or_default().push(op),
-            Err(e) => {
-                validation_errors.push(anyhow!(
-                    "Copy request #{i} (source: '{}'): {e}",
-                    req.source_file_path
-                ));
-            }
-        }
-    }
+    // The order here is fixed and documented for the LLM: moves, replaces, inserts.
 
     // Plan Moves
     for (i, req) in args.moves.iter().enumerate() {

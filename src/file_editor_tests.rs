@@ -376,7 +376,6 @@ mod tests {
                 new_content: vec!["...".to_string()],
             }],
             moves: vec![],
-            copies: vec![],
         };
 
         let result = execute_file_operations(&request, &mut manager, &accessible_paths);
@@ -473,7 +472,7 @@ mod tests {
 }
 
 use crate::file_editor::{
-    Anchor, CopyRequest, InsertRequest, MoveRequest, Position, ReplaceRequest, TopLevelRequest,
+     Anchor, InsertRequest, MoveRequest, Position, ReplaceRequest, TopLevelRequest,
     execute_file_operations,
 };
 use crate::file_state::FileState;
@@ -564,24 +563,7 @@ fn execute_operations_with_multiple_failures_reports_all_errors() -> Result<()> 
                 dest_anchor: None,
             },
         ],
-        copies: vec![
-            // --- FAILURE 3 ---
-            CopyRequest {
-                source_file_path: "non_existent_file.txt".to_string(), // Invalid file
-                source_range_start_anchor: Anchor {
-                    lid: "lid-0000_xxx".to_string(),
-                    line_content: "any".to_string(),
-                },
-                source_range_end_anchor: Anchor {
-                    lid: "lid-0000_yyy".to_string(),
-                    line_content: "any".to_string(),
-                },
-                dest_file_path: file_path2_str.to_string(),
-                dest_at_position: Position::StartOfFile,
-                dest_anchor: None,
-            },
-        ],
-    };
+     };
 
     // 3. Execution & Assertions
     let result = execute_file_operations(&args, &mut file_state_manager, &accessible_paths);
@@ -594,11 +576,8 @@ fn execute_operations_with_multiple_failures_reports_all_errors() -> Result<()> 
         println!("Error string: {error_string}");
 
         // Check that the error message contains the expected number of errors
-        assert!(error_string.starts_with("Validation failed with 4 error(s):"));
+         assert!(error_string.starts_with("Validation failed with 3 error(s):"));
 
-        // Check for specific failure messages
-        assert!(error_string.contains("Copy request #0 (source: 'non_existent_file.txt')"));
-        assert!(error_string.contains("Operation on path 'non_existent_file.txt' is not allowed."));
 
         assert!(error_string.contains(&format!(
             "Move request #0 (source: '{file_path1_str}', dest: '{file_path2_str}')"
