@@ -285,11 +285,64 @@ fn validate_anchor(
 
             if collapsed_actual != collapsed_expected {
                 return Err(anyhow!(
-                    "Validation failed for '{op_name}': {anchor_name} content mismatch for LID '{lid_str}'. Expected '{expected_content}', found '{actual_content}'."
+                    "Validation failed for '{op_name}': {anchor_name} content mismatch for LID '{lid_str}'.\n\
+                    The line content provided in your request does not match the current content of the file.\n\n\
+                    Expected content (from your request):\n  > {expected_content}\n\n\
+                    Actual content (in the file):\n  > {actual_content}"
                 ));
             }
         }
         None => {
+            // The LID wasn't found. Let's search for the line content to provide a better error message.
+            let collapsed_expected = collapse_whitespace(expected_content);
+
+            let found_line_info = file_state
+                .lines
+                .iter()
+                .enumerate()
+                .find(|(_, (_, (content, _)))| collapse_whitespace(content) == collapsed_expected);
+
+            if let Some((position, (index, (_actual_content, suffix)))) = found_line_info {
+                let line_number = position + 1;
+                let total_lines = file_state.lines.len();
+
+                // 5 lines before, the line itself, 4 lines after = 10 lines total
+                let start_line_num = line_number.saturating_sub(5).max(1);
+                let end_line_num = (line_number + 4).min(total_lines);
+
+                let all_lines_vec: Vec<_> = file_state.lines.iter().collect();
+
+                // slice indices are 0-based.
+                let context_slice = &all_lines_vec[(start_line_num - 1)..end_line_num];
+
+                let context_details = context_slice
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (f_index, (content, current_suffix)))| {
+                        let current_line_number = start_line_num + i;
+                        let lid = FileState::display_lid(f_index, current_suffix);
+                        let indicator = if current_line_number == line_number {
+                            ">"
+                        } else {
+                            " "
+                        };
+                        format!("{indicator} {current_line_number:<4} {lid}: {content}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                let new_lid = FileState::display_lid(index, suffix);
+                return Err(anyhow!(
+                    "Validation failed for '{op_name}': {anchor_name} LID '{lid_str}' not found in file '{}'.\n\
+                    However, the line content was found with a new LID '{new_lid}'. The file was likely modified externally.\n\
+                    Please use the new LIDs from the context below to form your request.\n\n\
+                    Context around the found line:\n---\n{}\n---",
+                    file_state.path.display(),
+                    context_details
+                ));
+            }
+
+            // If the content is also not found, fall back to the original error.
             return Err(anyhow!(
                 "Validation failed for '{op_name}': {anchor_name} LID '{lid_str}' not found in file '{}'.",
                 file_state.path.display()
@@ -307,10 +360,7 @@ pub fn execute_file_operations(
 ) -> Result<String> {
     let mut results = Vec::new();
 
-    if args.inserts.is_empty()
-        && args.replaces.is_empty()
-        && args.moves.is_empty()
-    {
+    if args.inserts.is_empty() && args.replaces.is_empty() && args.moves.is_empty() {
         return Ok("No file operations provided in the tool call.".to_string());
     }
 

@@ -90,7 +90,12 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("Expected 'WRONG content', found 'line 1'")
+                .contains("Expected content (from your request):\n  > WRONG content")
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("Actual content (in the file):\n  > line 1")
         );
 
         let disk_content = fs::read_to_string(&file_path).unwrap();
@@ -209,7 +214,12 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("Expected 'let y = 2;', found 'let x = 1;'")
+                .contains("Expected content (from your request):\n  > let y = 2;")
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("Actual content (in the file):\n  > let x = 1;")
         );
     }
 
@@ -472,7 +482,7 @@ mod tests {
 }
 
 use crate::file_editor::{
-     Anchor, InsertRequest, MoveRequest, Position, ReplaceRequest, TopLevelRequest,
+    Anchor, InsertRequest, MoveRequest, Position, ReplaceRequest, TopLevelRequest,
     execute_file_operations,
 };
 use crate::file_state::FileState;
@@ -563,7 +573,7 @@ fn execute_operations_with_multiple_failures_reports_all_errors() -> Result<()> 
                 dest_anchor: None,
             },
         ],
-     };
+    };
 
     // 3. Execution & Assertions
     let result = execute_file_operations(&args, &mut file_state_manager, &accessible_paths);
@@ -576,8 +586,7 @@ fn execute_operations_with_multiple_failures_reports_all_errors() -> Result<()> 
         println!("Error string: {error_string}");
 
         // Check that the error message contains the expected number of errors
-         assert!(error_string.starts_with("Validation failed with 3 error(s):"));
-
+        assert!(error_string.starts_with("Validation failed with 3 error(s):"));
 
         assert!(error_string.contains(&format!(
             "Move request #0 (source: '{file_path1_str}', dest: '{file_path2_str}')"
