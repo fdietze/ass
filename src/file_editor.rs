@@ -98,8 +98,8 @@ pub fn edit_file_tool_schema() -> Tool {
         function: FunctionDescription {
             name: "edit_file".to_string(),
             description: Some(
-                r#"Atomically performs a series of file editing operations using a robust anchor-based system.
-After a successful edit, this tool's output provides the new file hash. You have the latest file state; DO NOT call read_file afterward. LIDs are stable across edits, but their content may change.
+                r#"Atomically performs a series of file editing operations using a robust anchor-based system. Edit multiple files at once.
+After a successful edit, this tool's output provides the new file hash. You have the latest file state; DO NOT call read_file afterward. LIDs are stable across edits, unless the line was removed.
 
 All operations are planned based on the files' initial state. Line Anchors (LID + content) MUST be valid at the beginning of the tool call.
 
@@ -114,6 +114,9 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
 
 **Correctness**:
 - Pay special attention to balancing of parentheses, braces, and other syntax elements. Ranges should not cross these boundaries.
+
+**Output and Verification**:
+- After a successful edit, the tool provides a diff of what has been written to disk. Verify that this diff matches your expectations.
 "#
                     .to_string(),
             ),

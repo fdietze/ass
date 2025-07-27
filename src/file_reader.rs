@@ -25,7 +25,7 @@ pub fn read_file_tool_schema() -> Tool {
                 r#"CRITICAL: DO NOT use this tool if the file's content is already in your context from the conversation history or attached files. Attached files are always fresh. It is wasteful and unnecessary. Follow the user's instruction using the information you already have.
 Use this tool ONLY to read files for the first time, or if you have reason to believe it has been changed by an external process.
 
-Reads files with optional line ranges. It must always be an array of file path objects.
+Prefer reading targeted ranges where possible. If you have the knowledge about line ranges, like from a compiler or tool call errors, read the files with line ranges. It must always be an array of file path objects.
 
 Example tool call:
 {
