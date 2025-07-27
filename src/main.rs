@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
 
     let api_key = utils::load_api_key_from_env().expect("OPENROUTER_API_KEY not set");
     let openrouter_client = OpenRouterClient::new()
-        .with_base_url("https://openrouter.ai/api/v1/")?
+        .with_base_url(&config.base_url)?
         .with_timeout(Duration::from_secs(config.timeout_seconds))
         .with_api_key(api_key)?;
 

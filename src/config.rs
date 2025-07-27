@@ -59,6 +59,10 @@ pub struct ConfigLayer {
     /// Print API messages before sending them.
     #[arg(long)]
     pub print_messages: Option<bool>,
+
+    /// The base URL for the API client.
+    #[arg(long)]
+    pub base_url: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -76,6 +80,7 @@ pub struct Config {
     pub show_system_prompt: bool,
     pub debug_tool_calls: bool,
     pub print_messages: bool,
+    pub base_url: String,
 }
 
 impl Config {
@@ -123,6 +128,9 @@ impl Config {
         if let Some(print_messages) = layer.print_messages {
             self.print_messages = print_messages;
         }
+        if let Some(base_url) = &layer.base_url {
+            self.base_url = base_url.clone();
+        }
     }
 }
 
@@ -146,6 +154,7 @@ impl Default for Config {
             show_system_prompt: false,
             debug_tool_calls: false,
             print_messages: false,
+            base_url: "https://openrouter.ai/api/v1/".to_string(),
         }
     }
 }
