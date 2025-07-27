@@ -112,7 +112,7 @@ pub fn edit_file_tool_schema() -> Tool {
             name: "edit_file".to_string(),
             description: Some(
                 r#"Atomically performs a series of file editing operations using a robust anchor-based system.
-After a successful edit, this tool's output provides the new file hash. You have the latest file state; DO NOT call read_file afterward. LIDs are stable across edits.
+After a successful edit, this tool's output provides the new file hash. You have the latest file state; DO NOT call read_file afterward. LIDs are stable across edits, but their content may change.
 
 All operations are planned based on the files' initial state. Line Anchors (LID + content) MUST be valid at the beginning of the tool call.
 
@@ -123,7 +123,11 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
 **Operations**:
 - `inserts`: Adds new lines. Position can be `start_of_file`, `end_of_file`, or `after_anchor`.
 - `replaces`: Replaces a range of lines. To delete, provide an empty `new_content` array.
-- `moves` / `copies`: Transfers blocks of lines. Prefer `move` over `copy` + `delete`."#
+- `moves` / `copies`: Transfers blocks of lines. Prefer `move` over `copy` + `delete`.
+
+**Correctness**:
+- Pay special attention to balancing of parentheses, braces, and other syntax elements. Ranges should not cross these boundaries.
+"#
                     .to_string(),
             ),
             parameters: serde_json::json!({
