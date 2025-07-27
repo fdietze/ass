@@ -61,7 +61,7 @@ impl App {
         loop {
             match &mut self.state {
                 AppState::WaitingForUserInput => {
-                    print!("{} ", style("user>").cyan().bold());
+                    print!("\x07{} ", style("user>").cyan().bold());
                     io::stdout().flush()?;
 
                     tokio::select! {
@@ -191,7 +191,7 @@ impl App {
                     }
 
                     print!(
-                        "{} ",
+                        "\x07{} ",
                         style("Press Enter to execute, or Ctrl+C to cancel...").dim()
                     );
                     io::stdout().flush()?;
