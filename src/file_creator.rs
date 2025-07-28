@@ -42,8 +42,8 @@ fn plan_create_files(args: &CreateFileArgs, accessible_paths: &[String]) -> Resu
 pub struct CreateFileSpec {
     /// The path for the new file to be created.
     pub file_path: String,
-    /// The initial content of the new file, as a list of strings (lines).
-    pub content: Vec<String>,
+    /// The initial content of the new file.
+    pub content: String,
 }
 
 /// Represents the arguments for the `create_file` tool.
@@ -102,9 +102,8 @@ If the file content comes from another file, instead of creating a file with the
                                     "description": "The relative path for the new file."
                                 },
                                 "content": {
-                                    "type": "array",
-                                    "items": { "type": "string" },
-                                    "description": "The initial lines of content for the new file."
+                                    "type": "string",
+                                    "description": "The initial content for the new file."
                                 }
                             },
                             "required": ["file_path", "content"]
@@ -146,7 +145,7 @@ If the file content comes from another file, instead of creating a file with the
             if spec.content.is_empty() {
                 output.push("[empty file]".to_string());
             } else {
-                output.push(spec.content.join("\n"));
+                output.push(spec.content.clone());
             }
             output.push("```".to_string());
             if i < args.files.len() - 1 {
@@ -190,8 +189,7 @@ pub fn execute_create_files(
                 fs::create_dir_all(parent)?;
             }
 
-            let content = spec.content.join("\n");
-            fs::write(path_to_create, &content)?;
+            fs::write(path_to_create, &spec.content)?;
 
             let file_state = file_state_manager.open_file(&spec.file_path)?;
             Ok(file_state.display_lif_contents())
@@ -234,7 +232,7 @@ mod tests {
         let args = CreateFileArgs {
             files: vec![CreateFileSpec {
                 file_path: file_path_str.clone(),
-                content: vec!["hello".to_string(), "world".to_string()],
+                content: "hello\nworld".to_string(),
             }],
         };
 
@@ -261,7 +259,7 @@ mod tests {
         let args = CreateFileArgs {
             files: vec![CreateFileSpec {
                 file_path: file_path.clone(),
-                content: vec!["new content".to_string()],
+                content: "new content".to_string(),
             }],
         };
 
@@ -280,7 +278,7 @@ mod tests {
         let args = CreateFileArgs {
             files: vec![CreateFileSpec {
                 file_path: file_path.to_str().unwrap().to_string(),
-                content: vec!["content".to_string()],
+                content: "content".to_string(),
             }],
         };
 
@@ -301,11 +299,11 @@ mod tests {
             files: vec![
                 CreateFileSpec {
                     file_path: file_path1.to_str().unwrap().to_string(),
-                    content: vec!["file 1".to_string()],
+                    content: "file 1".to_string(),
                 },
                 CreateFileSpec {
                     file_path: file_path2.to_str().unwrap().to_string(),
-                    content: vec!["file 2".to_string()],
+                    content: "file 2".to_string(),
                 },
             ],
         };
@@ -339,7 +337,7 @@ mod tests {
         let args = CreateFileArgs {
             files: vec![CreateFileSpec {
                 file_path: file_path_str.to_string(),
-                content: vec!["line 1".to_string(), "line 2".to_string()],
+                content: "line 1\nline 2".to_string(),
             }],
         };
         let args_json = serde_json::to_value(&args).unwrap();
