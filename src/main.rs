@@ -2,7 +2,10 @@ use anyhow::Result;
 use clap::Parser;
 use console::style;
 use openrouter_api::{OpenRouterClient, types::chat::Message, utils};
+use std::sync::Arc;
 use std::time::Duration;
+
+use crate::tool_manager::ToolManager;
 
 mod cli;
 mod config;
@@ -21,7 +24,8 @@ mod permissions;
 mod prompt_builder;
 mod shell;
 mod streaming_executor;
-mod tool_executor;
+mod tool_manager;
+mod tools;
 mod ui;
 
 #[tokio::main]
@@ -30,14 +34,22 @@ async fn main() -> Result<()> {
     let config = config::load(&cli.overrides)?;
 
     let api_key = utils::load_api_key_from_env().expect("OPENROUTER_API_KEY not set");
-    let or_client = OpenRouterClient::new()
+    let openrouter_client = OpenRouterClient::new()
         .with_base_url("https://openrouter.ai/api/v1/")?
         .with_timeout(Duration::from_secs(config.timeout_seconds))
         .with_api_key(api_key)?;
 
     println!("Model: {}", config.model);
 
-    let mut app = ui::App::new(config.clone(), or_client);
+    let mut tool_manager = ToolManager::new();
+    tool_manager.register(Box::new(tools::FileCreatorTool));
+    tool_manager.register(Box::new(tools::FileEditorTool));
+    tool_manager.register(Box::new(tools::FileReaderTool));
+    tool_manager.register(Box::new(tools::ListFilesTool));
+    tool_manager.register(Box::new(tools::ShellTool));
+    let tool_manager = Arc::new(tool_manager);
+
+    let mut app = ui::App::new(config.clone(), openrouter_client, tool_manager);
 
     // Only process system prompt if one is configured
     if let Some(system_prompt) = &app.config.system_prompt {

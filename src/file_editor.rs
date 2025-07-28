@@ -16,17 +16,22 @@
 //! 4.  **Translation**: Validated requests are translated into simple, internal `PatchOperation`
 //!     primitives, which are then passed to the `FileState` module for execution.
 
+use crate::config::Config;
 use crate::file_state::FileState;
 use crate::file_state_manager::FileStateManager;
 use crate::patch::{InsertOp, PatchOperation, ReplaceOp};
 use crate::permissions;
+use crate::tools::Tool;
 use anyhow::{Result, anyhow};
+use async_trait::async_trait;
 use once_cell::sync::Lazy;
-use openrouter_api::models::tool::{FunctionDescription, Tool};
+use openrouter_api::models::tool::FunctionDescription;
 use regex::Regex;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
@@ -40,13 +45,13 @@ where
 // --- Tool-Facing Request Structs ---
 // These structs define the public API of the `edit_file` tool.
 
-#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Anchor {
     pub lid: String,
     pub line_content: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 pub struct TopLevelRequest {
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub inserts: Vec<InsertRequest>,
@@ -56,7 +61,7 @@ pub struct TopLevelRequest {
     pub moves: Vec<MoveRequest>,
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Position {
     StartOfFile,
@@ -64,7 +69,7 @@ pub enum Position {
     AfterAnchor,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct InsertRequest {
     pub file_path: String,
@@ -73,7 +78,7 @@ pub struct InsertRequest {
     pub anchor: Option<Anchor>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ReplaceRequest {
     pub file_path: String,
@@ -82,7 +87,7 @@ pub struct ReplaceRequest {
     pub new_content: Vec<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct MoveRequest {
     pub source_file_path: String,
@@ -93,9 +98,21 @@ pub struct MoveRequest {
     pub dest_anchor: Option<Anchor>,
 }
 
-pub fn edit_file_tool_schema() -> Tool {
-    Tool::Function {
-        function: FunctionDescription {
+/// Represents the successfully planned operations to be executed.
+pub struct EditPlan {
+    pub planned_ops: HashMap<PathBuf, Vec<PatchOperation>>,
+}
+
+pub struct FileEditorTool;
+
+#[async_trait]
+impl Tool for FileEditorTool {
+    fn name(&self) -> &'static str {
+        "edit_file"
+    }
+
+    fn schema(&self) -> FunctionDescription {
+        FunctionDescription {
             name: "edit_file".to_string(),
             description: Some(
                 r#"Atomically performs a series of file editing operations using a robust anchor-based system. Edit multiple files at once.
@@ -251,7 +268,38 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                 },
                 "required": []
             }),
-        },
+        }
+    }
+
+    /// This method acts as a full dry run, validating arguments and showing the
+    /// intended changes without actually modifying any state on disk.
+    fn preview(
+        &self,
+        args: &Value,
+        config: &Config,
+        fsm: Arc<Mutex<FileStateManager>>,
+    ) -> Result<String> {
+        let args: TopLevelRequest = serde_json::from_value(args.clone())?;
+        let mut manager = fsm.lock().unwrap();
+        create_diff_preview(&args, &mut manager, &config.accessible_paths)
+    }
+
+    /// Executes the tool's primary function.
+    ///
+    /// On success, this method returns a concise, machine-readable summary of
+    /// the changes, including new file hashes. This output is for the LLM.
+    ///
+    /// Any output intended for the user during execution (e.g., live command output)
+    /// should be printed directly to stdout within this method.
+    async fn execute(
+        &self,
+        args: &Value,
+        config: &Config,
+        fsm: Arc<Mutex<FileStateManager>>,
+    ) -> Result<String> {
+        let args: TopLevelRequest = serde_json::from_value(args.clone())?;
+        let mut manager = fsm.lock().unwrap();
+        execute_file_operations(&args, &mut manager, &config.accessible_paths)
     }
 }
 
@@ -352,23 +400,15 @@ fn validate_anchor(
     Ok(())
 }
 
-/// The main execution function for the `edit_file` tool.
-pub fn execute_file_operations(
+/// Validates the request and plans the necessary file operations.
+pub fn plan_file_operations(
     args: &TopLevelRequest,
     file_state_manager: &mut FileStateManager,
     accessible_paths: &[String],
-) -> Result<String> {
-    let mut results = Vec::new();
-
-    if args.inserts.is_empty() && args.replaces.is_empty() && args.moves.is_empty() {
-        return Ok("No file operations provided in the tool call.".to_string());
-    }
-
-    // A map from a canonical file path to its planned operations.
+) -> Result<EditPlan> {
     let mut planned_ops: HashMap<PathBuf, Vec<PatchOperation>> = HashMap::new();
     let mut validation_errors: Vec<anyhow::Error> = Vec::new();
 
-    // --- Phase 1: Plan and Validate all operations ---
     // The order here is fixed and documented for the LLM: moves, replaces, inserts.
 
     // Plan Moves
@@ -553,8 +593,25 @@ pub fn execute_file_operations(
         ));
     }
 
+    Ok(EditPlan { planned_ops })
+}
+
+/// The main execution function for the `edit_file` tool.
+pub fn execute_file_operations(
+    args: &TopLevelRequest,
+    file_state_manager: &mut FileStateManager,
+    accessible_paths: &[String],
+) -> Result<String> {
+    if args.inserts.is_empty() && args.replaces.is_empty() && args.moves.is_empty() {
+        return Ok("No file operations provided in the tool call.".to_string());
+    }
+
+    let plan = plan_file_operations(args, file_state_manager, accessible_paths)?;
+
+    let mut results = Vec::new();
+
     // --- Phase 2: Execute the consolidated plan ---
-    for (path, operations) in planned_ops {
+    for (path, operations) in plan.planned_ops {
         let file_path_str = path.to_string_lossy();
         let result: Result<String> = (|| {
             let file_state = file_state_manager.get_file_state_mut(&file_path_str)?;
@@ -576,6 +633,37 @@ pub fn execute_file_operations(
     }
 
     Ok(results.join("\n\n---\n\n"))
+}
+
+fn create_diff_preview(
+    args: &TopLevelRequest,
+    file_state_manager: &mut FileStateManager,
+    accessible_paths: &[String],
+) -> Result<String> {
+    if args.inserts.is_empty() && args.replaces.is_empty() && args.moves.is_empty() {
+        return Ok("No file edits will be performed.".to_string());
+    }
+
+    let plan = plan_file_operations(args, file_state_manager, accessible_paths)?;
+
+    if plan.planned_ops.is_empty() {
+        return Ok("No file operations would be performed after validation.".to_string());
+    }
+
+    let mut final_summary = Vec::new();
+    if plan.planned_ops.len() > 1 {
+        final_summary.push(format!("Edit {} files:", plan.planned_ops.len()));
+    }
+
+    for (path, operations) in &plan.planned_ops {
+        let file_path_str = path.to_string_lossy();
+        let file_state = file_state_manager.get_file_state_mut(&file_path_str)?;
+        let diff = file_state.calculate_patch_diff(operations)?;
+
+        final_summary.push(format!("{file_path_str} (diff):\n```\n{diff}\n```\n"));
+    }
+
+    Ok(final_summary.join("\n"))
 }
 
 #[cfg(test)]

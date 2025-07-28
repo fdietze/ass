@@ -52,9 +52,9 @@ pub struct ConfigLayer {
     #[arg(long)]
     pub show_system_prompt: Option<bool>,
 
-    /// Show detailed arguments in tool call confirmations.
+    /// Show detailed arguments and output for tool calls.
     #[arg(long)]
-    pub show_tool_call_args: Option<bool>,
+    pub debug_tool_calls: Option<bool>,
 
     /// Print API messages before sending them.
     #[arg(long)]
@@ -74,7 +74,7 @@ pub struct Config {
     pub accessible_paths: Vec<String>,
     pub terminal_bell: bool,
     pub show_system_prompt: bool,
-    pub show_tool_call_args: bool,
+    pub debug_tool_calls: bool,
     pub print_messages: bool,
 }
 
@@ -117,8 +117,8 @@ impl Config {
         if let Some(show_system_prompt) = layer.show_system_prompt {
             self.show_system_prompt = show_system_prompt;
         }
-        if let Some(show_tool_call_args) = layer.show_tool_call_args {
-            self.show_tool_call_args = show_tool_call_args;
+        if let Some(debug_tool_calls) = layer.debug_tool_calls {
+            self.debug_tool_calls = debug_tool_calls;
         }
         if let Some(print_messages) = layer.print_messages {
             self.print_messages = print_messages;
@@ -144,7 +144,7 @@ impl Default for Config {
             accessible_paths: vec![".".to_string()],
             terminal_bell: true,
             show_system_prompt: false,
-            show_tool_call_args: false,
+            debug_tool_calls: false,
             print_messages: false,
         }
     }

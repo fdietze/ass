@@ -1,10 +1,15 @@
+//! # Permissions Module
+//!
+//! This module provides a centralized and clear way, preventing security-sensitive logic from being
+//! scattered across the codebase.
+
 use anyhow::{Result, anyhow};
 use std::path::Path;
 
-/// Checks if an operation is allowed on a given path.
+/// Checks if a given file path is within the list of accessible paths.
 ///
-/// This function is the single source of truth for all file system permissions.
-/// It handles two cases:
+/// This function is crucial for sandboxing the agent's file system access. It
+/// handles two cases:
 /// 1. If the path exists, it checks if the path itself is within an accessible root.
 /// 2. If the path does not exist (e.g., for file creation), it checks if the
 ///    parent directory is within an accessible root.
@@ -216,5 +221,73 @@ mod tests {
 
         // Restore the original working directory
         std::env::set_current_dir(original_cwd).unwrap();
+    }
+}
+
+/// Checks if a shell command is allowed based on a prefix whitelist.
+pub fn is_command_allowed(command: &str, allowed_prefixes: &[String]) -> Result<()> {
+    if allowed_prefixes.is_empty() {
+        return Ok(()); // If whitelist is empty, all commands are allowed.
+    }
+
+    let is_allowed = allowed_prefixes
+        .iter()
+        .any(|prefix| command.starts_with(prefix));
+
+    if is_allowed {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "Command `{}` is not allowed. It does not start with any of the allowed prefixes: {:?}.",
+            command,
+            allowed_prefixes
+        ))
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    #[test]
+    fn test_command_allowed_by_empty_whitelist() {
+        let command = "ls -l";
+        let allowed_prefixes: Vec<String> = vec![];
+        assert!(is_command_allowed(command, &allowed_prefixes).is_ok());
+    }
+
+    #[test]
+    fn test_command_allowed_by_single_prefix() {
+        let command = "ls -l";
+        let allowed_prefixes = vec!["ls".to_string()];
+        assert!(is_command_allowed(command, &allowed_prefixes).is_ok());
+    }
+
+    #[test]
+    fn test_command_not_allowed_by_prefix() {
+        let command = "rm -rf /";
+        let allowed_prefixes = vec!["ls".to_string(), "echo".to_string()];
+        assert!(is_command_allowed(command, &allowed_prefixes).is_err());
+    }
+
+    #[test]
+    fn test_command_allowed_by_multiple_prefixes() {
+        let command = "echo 'hello'";
+        let allowed_prefixes = vec!["ls".to_string(), "echo".to_string()];
+        assert!(is_command_allowed(command, &allowed_prefixes).is_ok());
+    }
+
+    #[test]
+    fn test_full_path_command_allowed() {
+        let command = "/bin/ls -a";
+        let allowed_prefixes = vec!["/bin/ls".to_string()];
+        assert!(is_command_allowed(command, &allowed_prefixes).is_ok());
+    }
+
+    #[test]
+    fn test_full_path_command_not_allowed() {
+        let command = "/usr/bin/rm -rf /";
+        let allowed_prefixes = vec!["/bin/ls".to_string()];
+        assert!(is_command_allowed(command, &allowed_prefixes).is_err());
     }
 }

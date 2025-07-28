@@ -1,25 +1,47 @@
-use anyhow::Result;
+//! # Shell Tool
+//!
+//! This module provides the `execute_shell_command` tool, which allows the agent
+//! to run arbitrary shell commands.
+
+use crate::config::Config;
+use crate::permissions;
+use crate::tools::Tool;
+use anyhow::{Result, anyhow};
+use async_trait::async_trait;
 use console::style;
-use openrouter_api::models::tool::{FunctionDescription, Tool};
+use openrouter_api::models::tool::FunctionDescription;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
-/// Defines the arguments structure for our shell command tool.
-/// The LLM will populate this structure.
-#[derive(Serialize, Deserialize)]
+use crate::file_state_manager::FileStateManager;
+
+#[derive(Deserialize, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub struct ShellCommandArgs {
     pub command: String,
+    pub workdir: Option<String>,
 }
 
-/// Creates the tool schema that tells the LLM how to call our shell command function.
-pub fn shell_tool_schema() -> Tool {
-    Tool::Function {
-        function: FunctionDescription {
+pub struct ShellTool;
+
+#[async_trait]
+impl Tool for ShellTool {
+    fn name(&self) -> &'static str {
+        "execute_shell_command"
+    }
+
+    fn schema(&self) -> FunctionDescription {
+        FunctionDescription {
             name: "execute_shell_command".to_string(),
             description: Some(
-                "Executes a shell command if it is on the whitelist.
-Only use one command per call."
+                "Executes a shell command.
+This tool is powerful and can have side effects. Use it with caution.
+The command will be executed in the current working directory of the application.
+Live output from the command will be printed to the console. The final captured output (stdout and stderr) will be returned to you."
                     .to_string(),
             ),
             parameters: serde_json::json!({
@@ -27,88 +49,107 @@ Only use one command per call."
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "The shell command to execute. For example: ls -l"
+                        "description": "The shell command to execute."
+                    },
+                    "workdir": {
+                        "type": "string",
+                        "description": "The working directory to run the command in. Defaults to the current working directory."
                     }
                 },
                 "required": ["command"]
             }),
-        },
+        }
+    }
+
+    fn preview(
+        &self,
+        args: &Value,
+        config: &Config,
+        _fsm: Arc<Mutex<FileStateManager>>,
+    ) -> Result<String> {
+        let args: ShellCommandArgs = serde_json::from_value(args.clone())?;
+        permissions::is_command_allowed(&args.command, &config.allowed_command_prefixes)?;
+        let mut output = vec![];
+        if let Some(workdir) = args.workdir {
+            output.push(format!("Workdir: {workdir}"));
+        }
+        output.push(format!("$ {}", style(args.command).bold()));
+        Ok(output.join("\n"))
+    }
+
+    async fn execute(
+        &self,
+        args: &Value,
+        config: &Config,
+        _fsm: Arc<Mutex<FileStateManager>>,
+    ) -> Result<String> {
+        let args: ShellCommandArgs = serde_json::from_value(args.clone())?;
+        permissions::is_command_allowed(&args.command, &config.allowed_command_prefixes)?;
+        execute_shell_command(&args.command, args.workdir.as_deref()).await
     }
 }
 
-/// Executes a shell command after ensuring it's on the whitelist.
-pub async fn execute_shell_command(command: &str, allowed_prefixes: &[String]) -> Result<String> {
-    // --- Whitelist Check ---
-    if !allowed_prefixes
-        .iter()
-        .any(|prefix| command.starts_with(prefix))
-    {
-        println! {"{}", style(format!("Warning: The command `{command}` is not in the configured whitelist: {allowed_prefixes:?}. Executing anyway.")).yellow()};
+pub async fn execute_shell_command(command: &str, workdir: Option<&str>) -> Result<String> {
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c").arg(command);
+
+    if let Some(dir) = workdir {
+        cmd.current_dir(dir);
     }
 
-    // --- Execution ---
-    println!("> {}", style(command).bold());
-
-    // To interleave stdout and stderr, we redirect stderr to stdout (2>&1).
-    // This gives us a single, combined output stream, just like in a terminal.
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
+    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
 
     let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| anyhow::anyhow!("failed to take stdout"))?;
+        .ok_or_else(|| anyhow!("Failed to capture stdout"))?;
     let stderr = child
         .stderr
         .take()
-        .ok_or_else(|| anyhow::anyhow!("failed to take stderr"))?;
+        .ok_or_else(|| anyhow!("Failed to capture stderr"))?;
 
     let mut stdout_reader = BufReader::new(stdout).lines();
     let mut stderr_reader = BufReader::new(stderr).lines();
 
-    let mut output_lines = Vec::new();
+    let mut output = String::new();
+    let mut stdout_done = false;
+    let mut stderr_done = false;
 
     loop {
         tokio::select! {
-            line = stdout_reader.next_line() => {
-                if let Some(line) = line? {
-                    println!("{line}");
-                    output_lines.push(line);
-                } else {
-                    break;
+            // Always listen on stderr first or concurrently.
+            line = stderr_reader.next_line(), if !stderr_done => {
+                match line {
+                    Ok(Some(line)) => {
+                        eprintln!("{line}");
+                        output.push_str(&line);
+                        output.push('\n');
+                    }
+                    Ok(None) => stderr_done = true,
+                    Err(e) => return Err(anyhow!("Error reading stderr: {e}")),
                 }
-            },
-            line = stderr_reader.next_line() => {
-                if let Some(line) = line? {
-                    eprintln!("{line}");
-                    output_lines.push(line);
+            }
+            line = stdout_reader.next_line(), if !stdout_done => {
+                match line {
+                    Ok(Some(line)) => {
+                        println!("{line}");
+                        output.push_str(&line);
+                        output.push('\n');
+                    }
+                    Ok(None) => stdout_done = true,
+                    Err(e) => return Err(anyhow!("Error reading stdout: {e}")),
                 }
-            },
-            else => break,
+            }
+        }
+        if stdout_done && stderr_done {
+            break;
         }
     }
 
     let status = child.wait().await?;
-    let mut interleaved_output = output_lines.join("\n");
-
-    // --- Output Handling ---
-    let exit_code_string = status.to_string();
-    let exit_code_colored = if status.success() {
-        style(&exit_code_string).green()
-    } else {
-        style(&exit_code_string).red()
-    };
-    println!("{exit_code_colored}");
-
-    // Append the uncolored status to the output for the LLM
-    if !interleaved_output.is_empty() {
-        interleaved_output.push('\n');
+    if !status.success() {
+        return Err(anyhow!("Command failed with exit code {status}"));
     }
-    interleaved_output.push_str(&exit_code_string);
 
-    Ok(interleaved_output)
+    Ok(output)
 }

@@ -217,3 +217,45 @@ fn test_no_error_on_repeated_insertions() {
     }
     assert_eq!(state.lines.len(), 102);
 }
+
+#[test]
+fn test_calculate_patch_diff_does_not_mutate() {
+    let content = "line 1\nline 3";
+    let (_tmp_dir, file_path) = setup_test_file(content);
+    let state = FileState::new(file_path.clone(), content);
+    let original_hash = state.lif_hash.clone();
+    let original_lines = state.lines.clone();
+
+    let old_indexes = get_indexes(&state);
+
+    let patch = vec![PatchOperation::Insert(InsertOp {
+        after_lid: Some(old_indexes[0].clone()),
+        content: vec![("line 2".to_string(), "rand".to_string())],
+    })];
+
+    let diff_result = state.calculate_patch_diff(&patch);
+
+    // Assert that the diff was calculated successfully
+    assert!(diff_result.is_ok());
+    let diff = diff_result.unwrap();
+    assert!(diff.contains("+ lid-")); // A simple check to see if a diff was generated
+
+    // Assert that the original state is unchanged
+    assert_eq!(
+        state.lif_hash, original_hash,
+        "lif_hash should not change after dry run"
+    );
+    assert_eq!(
+        state.lines.len(),
+        original_lines.len(),
+        "Number of lines should not change"
+    );
+    assert_eq!(
+        state.lines, original_lines,
+        "Line content should not change"
+    );
+
+    // Assert that the file on disk is unchanged
+    let disk_content = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(disk_content, content, "File on disk should not be modified");
+}

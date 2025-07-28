@@ -1,14 +1,14 @@
 use crate::config::Config;
 use crate::file_state_manager::FileStateManager;
 use crate::prompt_builder;
-use crate::shell;
 use crate::streaming_executor;
-use crate::tool_executor;
+use crate::tool_manager::ToolManager;
 use anyhow::Result;
 use console::style;
 use openrouter_api::models::tool::ToolCall;
 use openrouter_api::types::chat::{ChatCompletionRequest, Message};
 use openrouter_api::{OpenRouterClient, Ready};
+use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
@@ -22,8 +22,11 @@ pub enum AppState {
     WaitingForUserInput,
     ProcessingPrompt(String),
     WaitingForLLM(JoinHandle<anyhow::Result<Option<Message>>>),
-    ConfirmingToolExecution(Vec<ToolCall>),
-    ExecutingTools(JoinHandle<anyhow::Result<Vec<Message>>>),
+    AwaitingToolConfirmation {
+        llm_response: Message,
+        tool_calls_queue: VecDeque<ToolCall>,
+        completed_messages: Vec<Message>,
+    },
     Shutdown,
 }
 
@@ -32,18 +35,24 @@ pub struct App {
     pub client: Arc<OpenRouterClient<Ready>>,
     pub messages: Vec<Message>,
     pub file_state_manager: Arc<Mutex<FileStateManager>>,
+    pub tool_manager: Arc<ToolManager>,
     pub state: AppState,
     stdin_receiver: mpsc::Receiver<Option<String>>,
 }
 
 impl App {
-    pub fn new(config: Config, client: OpenRouterClient<Ready>) -> Self {
+    pub fn new(
+        config: Config,
+        client: OpenRouterClient<Ready>,
+        tool_manager: Arc<ToolManager>,
+    ) -> Self {
         let _file_state_manager = FileStateManager::new();
         Self {
             config,
             client: Arc::new(client),
             messages: Vec::new(),
             file_state_manager: Arc::new(Mutex::new(FileStateManager::new())),
+            tool_manager,
             state: AppState::Initializing,
             stdin_receiver: spawn_stdin_channel(),
         }
@@ -94,41 +103,88 @@ impl App {
                         }
                     }
                 }
-                AppState::ExecutingTools(_) => {
-                    let (new_state, should_break) = tokio::select! {
-                            _ = tokio::signal::ctrl_c() => {
-                                 if let AppState::ExecutingTools(handle) = &mut self.state {
-                                    println!("\n{}", style("Tool execution cancelled.").yellow());
-                                    handle.abort();
-                                }
-                                (AppState::WaitingForUserInput, false)
+                AppState::AwaitingToolConfirmation { .. } => {
+                    if let AppState::AwaitingToolConfirmation {
+                        llm_response,
+                        tool_calls_queue,
+                        completed_messages,
+                    } = &mut self.state
+                    {
+                        // If the queue is empty, we're done.
+                        if tool_calls_queue.is_empty() {
+                            // Add original LLM message if we actually did something.
+                            if !completed_messages.is_empty() {
+                                self.messages.push(llm_response.clone());
                             }
-                            result = async {
-                                 if let AppState::ExecutingTools(handle) = &mut self.state {
-                                    handle.await
-                    } else {
-                                    unreachable!()
-                                }
-                            } => {
-                                match result {
-                                     Ok(Ok(tool_messages)) => {
-                                         self.messages.extend(tool_messages);
-                                         (self.spawn_llm_call(), false)
-                                     }
-                                    Ok(Err(e)) => {
-                                        eprintln!("{}", style(format!("Tool execution failed: {e}")).red());
-                                        (AppState::WaitingForUserInput, false)
-                                    }
-                                    Err(e) => {
-                                         eprintln!("{}", style(format!("Tool task failed: {e}")).red());
-                                        (AppState::WaitingForUserInput, false)
-                                    }
+                            self.messages.append(completed_messages);
+                            self.state = self.spawn_llm_call();
+                            continue; // Go to next loop iteration for new state.
+                        }
+
+                        // Peek at the next tool. Don't remove it yet.
+                        let tool_call = tool_calls_queue.front().unwrap().clone();
+
+                        // Display preview.
+                        println!(
+                            "[{}]",
+                            style(format!("tool: {}", tool_call.function_call.name)).magenta()
+                        );
+                        match self
+                            .tool_manager
+                            .preview_tool_call(
+                                &tool_call,
+                                &self.config,
+                                self.file_state_manager.clone(),
+                            )
+                            .await
+                        {
+                            Ok(preview) => {
+                                println!("{preview}");
+                                // Good. Proceed to confirmation.
+                            }
+                            Err(e) => {
+                                // Preview failed. Auto-skip this tool.
+                                let error_message = format!("Preview failed, skipping: {e}");
+                                eprintln!("{}", style(&error_message).red());
+                                completed_messages.push(Message {
+                                    role: "tool".to_string(),
+                                    content: error_message,
+                                    name: Some(tool_call.function_call.name.clone()),
+                                    tool_call_id: Some(tool_call.id.clone()),
+                                    tool_calls: None,
+                                });
+                                tool_calls_queue.pop_front();
+                                // Loop to process the next tool in the queue.
+                                continue;
+                            }
+                        };
+
+                        // Prompt for confirmation.
+                        print!("\x07{} ", style("Execute this tool? [Y/n] ").dim());
+                        io::stdout().flush()?;
+
+                        // Asynchronously wait for input.
+                        tokio::select! {
+                            _ = tokio::signal::ctrl_c() => {
+                                println!("\n{}", style("Operation cancelled. Returning to input.").yellow());
+                                self.state = AppState::WaitingForUserInput;
+                            }
+                            line_opt = self.stdin_receiver.recv() => {
+                                let input = line_opt.flatten().unwrap_or_default();
+                                if input.eq_ignore_ascii_case("n") {
+                                    // Abort All
+                                    println!("{}", style("Operation cancelled. Returning to input.").yellow());
+                                    self.state = AppState::WaitingForUserInput;
+                                } else {
+                                    // Confirmed. Execute the tool.
+                                    let tool_to_execute = tool_calls_queue.pop_front().unwrap();
+                                    let result_msg = self.tool_manager.execute_tool_call(&tool_to_execute, &self.config, self.file_state_manager.clone()).await;
+                                    completed_messages.push(result_msg);
+                                    // The state has been mutated (queue popped, results added),
+                                    // so we just continue the main loop to process the next item.
                                 }
                             }
                         };
-                    self.state = new_state;
-                    if should_break {
-                        break;
                     }
                 }
                 AppState::WaitingForLLM(_) => {
@@ -149,15 +205,17 @@ impl App {
                         } => {
                              match result {
                                 Ok(Ok(Some(response_message))) => {
-                                    let has_tool_calls = response_message.tool_calls.is_some();
-                                    self.messages.push(response_message);
-                                     if has_tool_calls {
-                                        if let Some(tool_calls) = self.messages.last().unwrap().tool_calls.clone() {
-                                            (AppState::ConfirmingToolExecution(tool_calls), false)
-                                        } else {
-                                            (AppState::WaitingForUserInput, false)
-                                        }
+                                     if let Some(tool_calls) = response_message.tool_calls.clone() {
+                                        (
+                                            AppState::AwaitingToolConfirmation {
+                                                llm_response: response_message,
+                                                tool_calls_queue: tool_calls.into(),
+                                                completed_messages: Vec::new(),
+                                            },
+                                            false,
+                                        )
                                      } else {
+                                         self.messages.push(response_message);
                                          (AppState::WaitingForUserInput, false)
                                      }
                                 }
@@ -179,51 +237,6 @@ impl App {
                     if should_break {
                         break;
                     }
-                }
-                AppState::ConfirmingToolExecution(tool_calls) => {
-                    for tool_call in tool_calls {
-                        let function_name = &tool_call.function_call.name;
-                        println!("[{}]", style(format!("tool: {function_name}")).magenta());
-                        if self.config.show_tool_call_args {
-                            let pretty_args = pretty_print_json(&tool_call.function_call.arguments);
-                            println!("{pretty_args}");
-                        }
-                    }
-
-                    print!(
-                        "\x07{} ",
-                        style("Press Enter to execute, or Ctrl+C to cancel...").dim()
-                    );
-                    io::stdout().flush()?;
-
-                    tokio::select! {
-                            _ = tokio::signal::ctrl_c() => {
-                                println!("\n{}", style("Tool confirmation cancelled.").yellow());
-                                self.state = AppState::WaitingForUserInput;
-                            }
-                            line_opt = self.stdin_receiver.recv() => {
-                                if let Some(_input) = line_opt.flatten() {
-                                    // User pressed Enter
-                                     if let AppState::ConfirmingToolExecution(tool_calls) = &self.state {
-                                         let tool_calls_clone = tool_calls.clone();
-                                         let config = self.config.clone();
-                                         let fsm = Arc::clone(&self.file_state_manager);
-                                         let handle = tokio::spawn(async move {
-                                             let mut results = Vec::new();
-                                             for tool_call in tool_calls_clone {
-                                                 results.push(tool_executor::handle_tool_call(&tool_call, &config, fsm.clone()).await?);
-                                             }
-                                             Ok(results)
-                                         });
-                                         self.state = AppState::ExecutingTools(handle);
-                                    }
-                    } else {
-                                    // Channel closed or Ctrl+D, treat as cancellation
-                                    println!();
-                                    self.state = AppState::Shutdown;
-                                }
-                            }
-                        }
                 }
                 AppState::Shutdown => {
                     println!("\nShutting down...");
@@ -259,13 +272,7 @@ impl App {
     }
 
     fn spawn_llm_call(&self) -> AppState {
-        let tools = vec![
-            shell::shell_tool_schema(),
-            crate::file_creator::create_file_tool_schema(),
-            crate::file_editor::edit_file_tool_schema(),
-            crate::file_reader::read_file_tool_schema(),
-            crate::list_files::list_files_tool_schema(),
-        ];
+        let tools = self.tool_manager.get_all_schemas();
 
         let request = ChatCompletionRequest {
             model: self.config.model.clone(),
@@ -377,14 +384,3 @@ fn spawn_stdin_channel() -> mpsc::Receiver<Option<String>> {
     });
     rx
 }
-
-fn pretty_print_json(json_string: &str) -> String {
-    match serde_json::from_str::<serde_json::Value>(json_string) {
-        Ok(value) => {
-            serde_json::to_string_pretty(&value).unwrap_or_else(|_| json_string.to_string())
-        }
-        Err(_) => json_string.to_string(),
-    }
-}
-
-// The test for the old collapsing logic is no longer needed and will be removed.

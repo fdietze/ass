@@ -26,21 +26,21 @@ use crate::patch::PatchOperation;
 use anyhow::{Result, anyhow};
 use fractional_index::FractionalIndex;
 use rand::Rng;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
 /// Represents a 1-indexed, inclusive range of lines.
-#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RangeSpec {
     pub start_line: usize,
     pub end_line: usize,
 }
 
 /// Represents the in-memory state of a single "open" file using the LIF protocol.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FileState {
     /// The absolute, canonicalized path to the file on disk.
     pub path: PathBuf,
@@ -208,6 +208,14 @@ impl FileState {
 
         fs::write(&self.path, &final_content)?;
 
+        Ok(diff)
+    }
+
+    /// Calculates a diff for a patch without applying it to the current state.
+    pub fn calculate_patch_diff(&self, patch: &[PatchOperation]) -> Result<String> {
+        let mut temp_state = self.clone();
+        temp_state.apply_patch(patch)?;
+        let diff = diff::generate_custom_diff(&self.lines, &temp_state.lines);
         Ok(diff)
     }
 

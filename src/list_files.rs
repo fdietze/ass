@@ -1,18 +1,45 @@
-use crate::{config::Config, path_expander, permissions};
+use crate::{config::Config, path_expander, permissions, tools::Tool};
 use anyhow::{Result, anyhow};
-use console::style;
-use openrouter_api::models::tool::{FunctionDescription, Tool};
-use serde::Deserialize;
+use async_trait::async_trait;
+use openrouter_api::models::tool::FunctionDescription;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
-#[derive(Deserialize, Debug)]
+use crate::file_state_manager::FileStateManager;
+
+/// The main validation and planning logic for the `list_files` tool.
+/// Ensures the path is an accessible, existing directory.
+fn plan_list_files(args: &ListFilesArgs, config: &Config) -> Result<()> {
+    let path_to_list = Path::new(&args.path);
+
+    permissions::is_path_accessible(path_to_list, &config.accessible_paths)?;
+
+    if !path_to_list.is_dir() {
+        return Err(anyhow!(
+            "Validation failed: The provided path '{}' is not a directory or does not exist.",
+            path_to_list.display()
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Deserialize, Debug, Serialize)]
 pub struct ListFilesArgs {
     pub path: String,
 }
 
-pub fn list_files_tool_schema() -> Tool {
-    Tool::Function {
-        function: FunctionDescription {
+pub struct ListFilesTool;
+
+#[async_trait]
+impl Tool for ListFilesTool {
+    fn name(&self) -> &'static str {
+        "list_files"
+    }
+
+    fn schema(&self) -> FunctionDescription {
+        FunctionDescription {
             name: "list_files".to_string(),
             description: Some(
                 "Lists all files in a given directory recursively, respecting gitignore and other ignore rules."
@@ -28,21 +55,38 @@ pub fn list_files_tool_schema() -> Tool {
                 },
                 "required": ["path"]
             }),
-        },
+        }
+    }
+
+    fn preview(
+        &self,
+        args: &Value,
+        config: &Config,
+        _fsm: Arc<Mutex<FileStateManager>>,
+    ) -> Result<String> {
+        let args: ListFilesArgs = serde_json::from_value(args.clone())?;
+        plan_list_files(&args, config)?;
+        execute_list_files(&args, config)
+    }
+
+    async fn execute(
+        &self,
+        args: &Value,
+        config: &Config,
+        _fsm: Arc<Mutex<FileStateManager>>,
+    ) -> Result<String> {
+        let args: ListFilesArgs = serde_json::from_value(args.clone())?;
+        // The plan has already validated the path is a directory and accessible.
+        plan_list_files(&args, config)?;
+        execute_list_files(&args, config)
     }
 }
 
 pub fn execute_list_files(args: &ListFilesArgs, config: &Config) -> Result<String> {
     let path_to_list = Path::new(&args.path);
 
-    permissions::is_path_accessible(path_to_list, &config.accessible_paths)?;
-
-    if !path_to_list.is_dir() {
-        return Err(anyhow!(
-            "Error: The provided path '{}' is not a directory.",
-            path_to_list.display()
-        ));
-    }
+    // Initial validation is now done in the planner.
+    // We can proceed with the assumption that the path is a valid directory.
 
     let expansion_result =
         path_expander::expand_and_validate(&[args.path.clone()], &config.ignored_paths);
@@ -50,14 +94,11 @@ pub fn execute_list_files(args: &ListFilesArgs, config: &Config) -> Result<Strin
     if expansion_result.files.is_empty() {
         return Ok(format!(
             "# No files found in '{}'. It might be empty or all files are ignored.",
-            style(path_to_list.display().to_string()).cyan()
+            path_to_list.display()
         ));
     }
 
-    let header = format!(
-        "List of files in `{}`:\n",
-        style(path_to_list.display().to_string()).blue()
-    );
+    let header = format!("Files in `{}`:\n", path_to_list.display());
     let file_list = expansion_result.files.join("\n");
 
     Ok(format!("{header}{file_list}"))
@@ -97,6 +138,10 @@ mod tests {
             path: tmp_dir.path().to_str().unwrap().to_string(),
         };
 
+        // Test planner
+        assert!(plan_list_files(&args, &config).is_ok());
+
+        // Test executor
         let result = execute_list_files(&args, &config).unwrap();
 
         assert!(result.contains("file1.txt"));
@@ -108,10 +153,12 @@ mod tests {
     #[test]
     fn test_respects_ignore_rules() {
         let (tmp_dir, config) = setup_test_dir();
+        let sub_dir_path = tmp_dir.path().join("sub_dir");
         let args = ListFilesArgs {
-            path: tmp_dir.path().join("sub_dir").to_str().unwrap().to_string(),
+            path: sub_dir_path.to_str().unwrap().to_string(),
         };
 
+        assert!(plan_list_files(&args, &config).is_ok());
         let result = execute_list_files(&args, &config).unwrap();
 
         assert!(result.contains("file2.rs"));
@@ -130,7 +177,7 @@ mod tests {
             path: tmp_dir.path().to_str().unwrap().to_string(),
         };
 
-        let result = execute_list_files(&args, &config);
+        let result = plan_list_files(&args, &config);
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(error_msg.contains("is not allowed"));
@@ -144,7 +191,7 @@ mod tests {
             path: file_path.to_str().unwrap().to_string(),
         };
 
-        let result = execute_list_files(&args, &config);
+        let result = plan_list_files(&args, &config);
         assert!(result.is_err());
         assert!(
             result
@@ -164,7 +211,30 @@ mod tests {
             path: empty_dir_path.to_str().unwrap().to_string(),
         };
 
+        assert!(plan_list_files(&args, &config).is_ok());
         let result = execute_list_files(&args, &config).unwrap();
         assert!(result.contains("No files found"));
+    }
+
+    #[test]
+    fn test_tool_preview() {
+        let tool = ListFilesTool;
+        let mut config = Config::default();
+        let temp = Builder::new().prefix("test-preview").tempdir().unwrap();
+        let src_path = temp.path().join("src");
+        fs::create_dir(&src_path).unwrap();
+        config.accessible_paths = vec![temp.path().to_str().unwrap().to_string()];
+        let args = serde_json::json!({ "path": src_path.to_str().unwrap() });
+
+        let fsm = Arc::new(Mutex::new(FileStateManager::new()));
+        let preview = tool.preview(&args, &config, fsm.clone()).unwrap();
+        assert!(preview.contains("No files found"));
+
+        // Now add a file and check again
+        let file_path = src_path.join("test.txt");
+        fs::write(file_path, "content").unwrap();
+        let preview_with_file = tool.preview(&args, &config, fsm).unwrap();
+        assert!(preview_with_file.contains("test.txt"));
+        assert!(preview_with_file.contains("Files in"));
     }
 }
