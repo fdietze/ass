@@ -30,11 +30,11 @@ I should make sure that the parameters are correctly formatted. The content arra
 
 [tool: create_files]
 hello.txt:
-```
+\`\`\`
 
 Hello world
 
-```
+\`\`\`
 Execute this tool? [Y/n]
 
 [assistant]
@@ -44,12 +44,12 @@ Okay, the user wanted to create a file called hello.txt with 'Hello world'. I ca
 
 The file 'hello.txt' has been created successfully. The content is as specified:
 
-```
+\`\`\`
 
 File: hello.txt | Hash: 5b774464 | Lines: 1-1/1
 1 lid-80_h812: Hello world
 
-```
+\`\`\`
 
 No further actions are needed.
 user>
