@@ -1,12 +1,13 @@
 use anyhow::Result;
 use clap::Parser;
 use console::style;
-use openrouter_api::{OpenRouterClient, types::chat::Message, utils};
+use openrouter_api::{OpenRouterClient, types::chat::Message};
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::tool_manager::ToolManager;
 
+mod backend;
 mod cli;
 mod config;
 mod diff;
@@ -33,12 +34,19 @@ async fn main() -> Result<()> {
     let cli = cli::Cli::parse();
     let config = config::load(&cli.overrides)?;
 
-    let api_key = utils::load_api_key_from_env().expect("OPENROUTER_API_KEY not set");
-    let openrouter_client = OpenRouterClient::new()
+    let api_key = if let Some(env_var) = config.backend.api_key_env_var() {
+        std::env::var(env_var)?
+    } else {
+        // TODO: only call .with_api_key if let Some(config.backend.api_key_env_var())
+        "sk-or-v1-0000000000000000000000000000000000000000000000000000000000000000".to_string()
+    };
+
+    let client = OpenRouterClient::new()
         .with_base_url(&config.base_url)?
         .with_timeout(Duration::from_secs(config.timeout_seconds))
         .with_api_key(api_key)?;
 
+    println!("Backend: {:?}", config.backend);
     println!("Model: {}", config.model);
 
     let mut tool_manager = ToolManager::new();
@@ -49,7 +57,7 @@ async fn main() -> Result<()> {
     tool_manager.register(Box::new(tools::ShellTool));
     let tool_manager = Arc::new(tool_manager);
 
-    let mut app = ui::App::new(config.clone(), openrouter_client, tool_manager);
+    let mut app = ui::App::new(config.clone(), client, tool_manager);
 
     // Only process system prompt if one is configured
     if let Some(system_prompt) = &app.config.system_prompt {

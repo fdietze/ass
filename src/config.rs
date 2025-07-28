@@ -1,3 +1,4 @@
+use crate::backend::Backend;
 use anyhow::Result;
 use clap::Args;
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,10 @@ When you have the final answer, provide it directly without using a tool.";
 #[derive(Args, Deserialize, Debug, Default)]
 #[serde(default)]
 pub struct ConfigLayer {
+    /// The backend to use.
+    #[arg(long, value_enum)]
+    pub backend: Option<Backend>,
+
     /// The model to use for the agent.
     #[arg(long)]
     pub model: Option<String>,
@@ -68,6 +73,7 @@ pub struct ConfigLayer {
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(default)]
 pub struct Config {
+    pub backend: Backend,
     pub model: String,
     pub system_prompt: Option<String>,
     pub timeout_seconds: u64,
@@ -82,11 +88,18 @@ pub struct Config {
     pub print_messages: bool,
     pub base_url: String,
 }
-
 impl Config {
     /// Merges a configuration layer into the current configuration.
     /// Values in the layer take precedence.
     pub fn merge(&mut self, layer: &ConfigLayer) {
+        if let Some(backend) = &layer.backend {
+            self.backend = backend.clone();
+            // Only update base_url if it wasn't explicitly provided in the same layer.
+            if layer.base_url.is_none() {
+                self.base_url = self.backend.default_base_url().to_string();
+            }
+        }
+
         if let Some(model) = &layer.model {
             self.model = model.clone();
         }
@@ -136,7 +149,9 @@ impl Config {
 
 impl Default for Config {
     fn default() -> Self {
+        let backend = Backend::default();
         Self {
+            backend: backend.clone(),
             model: "google/gemini-2.5-flash-preview".to_string(),
             system_prompt: Some(DEFAULT_SYSTEM_PROMPT.to_string()),
             timeout_seconds: 120,
@@ -154,7 +169,7 @@ impl Default for Config {
             show_system_prompt: false,
             debug_tool_calls: false,
             print_messages: false,
-            base_url: "https://openrouter.ai/api/v1/".to_string(),
+            base_url: backend.default_base_url().to_string(),
         }
     }
 }
