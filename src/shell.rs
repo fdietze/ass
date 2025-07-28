@@ -147,9 +147,17 @@ pub async fn execute_shell_command(command: &str, workdir: Option<&str>) -> Resu
     }
 
     let status = child.wait().await?;
-    if !status.success() {
-        return Err(anyhow!("Command failed with exit code {status}"));
-    }
+    let exit_message = if let Some(code) = status.code() {
+        format!("Exit code: {code}")
+    } else {
+        "Process terminated by signal".to_string()
+    };
+
+    let styled_exit_message = style(&exit_message).bold().to_string();
+    println!("\n{styled_exit_message}");
+
+    output.push('\n');
+    output.push_str(&exit_message);
 
     Ok(output)
 }
