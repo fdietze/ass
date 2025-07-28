@@ -137,6 +137,7 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
 "#
                     .to_string(),
             ),
+            strict: Some(true),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {

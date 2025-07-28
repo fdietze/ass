@@ -98,6 +98,7 @@ File: jokes.txt | Hash: 931d3b24 | Lines: 1-1/1
 - When using `edit_file`, you MUST provide the full LID including the prefix (e.g., `lid-80`), not the line number (`1`)."#
                     .to_string(),
             ),
+            strict: Some(true),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {

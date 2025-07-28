@@ -44,6 +44,7 @@ The command will be executed in the current working directory of the application
 Live output from the command will be printed to the console. The final captured output (stdout and stderr) will be returned to you."
                     .to_string(),
             ),
+            strict: Some(true),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {

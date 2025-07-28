@@ -45,6 +45,7 @@ impl Tool for ListFilesTool {
                 "Lists all files in a given directory recursively, respecting gitignore and other ignore rules."
                     .to_string(),
             ),
+            strict: Some(true),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {

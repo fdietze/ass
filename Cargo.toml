@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-openrouter_api = { git = "https://github.com/fdietze/openrouter_api.git", rev = "1c5ad15" }
+openrouter_api = { git = "https://github.com/fdietze/openrouter_api.git", rev = "aa0df39" }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1.0"
 serde_json = { version = "1", features = ["preserve_order"] }

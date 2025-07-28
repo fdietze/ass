@@ -87,6 +87,7 @@ If the file content comes from another file, instead of creating a file with the
 "
                     .to_string(),
             ),
+            strict: Some(true),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
