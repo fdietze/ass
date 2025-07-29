@@ -1,6 +1,8 @@
 use crate::config::Config;
 use crate::file_state_manager::FileStateManager;
+use crate::permissions;
 use crate::prompt_builder;
+use crate::shell::ShellCommandArgs;
 use crate::streaming_executor;
 use crate::tool_manager::ToolManager;
 use anyhow::Result;
@@ -158,6 +160,41 @@ impl App {
                                 continue;
                             }
                         };
+
+                        let mut should_auto_execute = self.config.auto_execute;
+                        if tool_call.function_call.name == "execute_shell_command" {
+                            if let Ok(args) = serde_json::from_str::<ShellCommandArgs>(
+                                &tool_call.function_call.arguments,
+                            ) {
+                                if permissions::is_command_allowed(
+                                    &args.command,
+                                    &self.config.allowed_command_prefixes,
+                                )
+                                .is_err()
+                                {
+                                    should_auto_execute = false; // Not in whitelist, require confirmation
+                                }
+                            } else {
+                                should_auto_execute = false; // Malformed args, require confirmation
+                            }
+                        }
+
+                        if should_auto_execute {
+                            // Automatically execute the tool without confirmation.
+                            let tool_to_execute = tool_calls_queue.pop_front().unwrap();
+                            let result_msg = self
+                                .tool_manager
+                                .execute_tool_call(
+                                    &tool_to_execute,
+                                    &self.config,
+                                    self.file_state_manager.clone(),
+                                )
+                                .await;
+                            completed_messages.push(result_msg);
+
+                            // Continue the loop to process the next tool call or move to the next state.
+                            continue;
+                        }
 
                         // Prompt for confirmation.
                         print!("\x07{} ", style("Execute this tool? [Y/n] ").dim());

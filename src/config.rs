@@ -92,6 +92,10 @@ pub struct ConfigLayer {
     #[arg(long)]
     pub debug_tool_calls: Option<bool>,
 
+    /// Automatically execute all tool calls.
+    #[arg(long)]
+    pub auto_execute: Option<bool>,
+
     /// Print API messages before sending them.
     #[arg(long)]
     pub print_messages: Option<bool>,
@@ -116,6 +120,7 @@ pub struct Config {
     pub terminal_bell: bool,
     pub show_system_prompt: bool,
     pub debug_tool_calls: bool,
+    pub auto_execute: bool,
     pub print_messages: bool,
     pub base_url: String,
 }
@@ -169,6 +174,9 @@ impl Config {
         if let Some(debug_tool_calls) = layer.debug_tool_calls {
             self.debug_tool_calls = debug_tool_calls;
         }
+        if let Some(auto_execute) = layer.auto_execute {
+            self.auto_execute = auto_execute;
+        }
         if let Some(print_messages) = layer.print_messages {
             self.print_messages = print_messages;
         }
@@ -201,6 +209,7 @@ impl Default for Config {
             terminal_bell: true,
             show_system_prompt: false,
             debug_tool_calls: false,
+            auto_execute: false,
             print_messages: false,
             base_url: backend.default_base_url().to_string(),
         }

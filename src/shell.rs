@@ -4,7 +4,6 @@
 //! to run arbitrary shell commands.
 
 use crate::config::Config;
-use crate::permissions;
 use crate::tools::Tool;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -66,11 +65,10 @@ Live output from the command will be printed to the console. The final captured 
     fn preview(
         &self,
         args: &Value,
-        config: &Config,
+        _config: &Config,
         _fsm: Arc<Mutex<FileStateManager>>,
     ) -> Result<String> {
         let args: ShellCommandArgs = serde_json::from_value(args.clone())?;
-        permissions::is_command_allowed(&args.command, &config.allowed_command_prefixes)?;
         let mut output = vec![];
         if let Some(workdir) = args.workdir {
             output.push(format!("Workdir: {workdir}"));
@@ -82,11 +80,10 @@ Live output from the command will be printed to the console. The final captured 
     async fn execute(
         &self,
         args: &Value,
-        config: &Config,
+        _config: &Config,
         _fsm: Arc<Mutex<FileStateManager>>,
     ) -> Result<String> {
         let args: ShellCommandArgs = serde_json::from_value(args.clone())?;
-        permissions::is_command_allowed(&args.command, &config.allowed_command_prefixes)?;
         execute_shell_command(&args.command, args.workdir.as_deref()).await
     }
 }
