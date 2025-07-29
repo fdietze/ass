@@ -4,23 +4,23 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "lowercase")]
 pub enum Backend {
     #[default]
-    OpenRouter,
+    Openrouter,
     Ollama,
-    OpenAI,
+    Openai,
 }
 
 impl Backend {
     pub fn default_base_url(&self) -> &str {
         match self {
-            Backend::OpenRouter => "https://openrouter.ai/api/v1/",
+            Backend::Openrouter => "https://openrouter.ai/api/v1/",
             Backend::Ollama => "http://localhost:11434/v1/",
-            Backend::OpenAI => "https://api.openai.com/v1/",
+            Backend::Openai => "https://api.openai.com/v1/",
         }
     }
     pub fn api_key_env_var(&self) -> Option<&str> {
         match self {
-            Backend::OpenRouter => Some("OPENROUTER_API_KEY"),
-            Backend::OpenAI => Some("OPENAI_API_KEY"),
+            Backend::Openrouter => Some("OPENROUTER_API_KEY"),
+            Backend::Openai => Some("OPENAI_API_KEY"),
             Backend::Ollama => None,
         }
     }
