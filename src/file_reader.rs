@@ -165,6 +165,18 @@ File: jokes.txt | Hash: 931d3b24 | Lines: 1-1/1
         let mut manager = fsm.lock().unwrap();
         execute_read_file(&args, &mut manager)
     }
+
+    fn is_safe_for_auto_execute(&self, args: &Value, config: &Config) -> Result<bool> {
+        let args: FileReadArgs = serde_json::from_value(args.clone())?;
+        for spec in &args.files {
+            if permissions::is_path_accessible(Path::new(&spec.file_path), &config.accessible_paths)
+                .is_err()
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
 }
 
 pub fn merge_ranges(mut ranges: Vec<RangeSpec>) -> Vec<RangeSpec> {

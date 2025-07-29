@@ -1,8 +1,7 @@
 use crate::config::Config;
 use crate::file_state_manager::FileStateManager;
-use crate::permissions;
 use crate::prompt_builder;
-use crate::shell::ShellCommandArgs;
+
 use crate::streaming_executor;
 use crate::tool_manager::ToolManager;
 use anyhow::Result;
@@ -162,20 +161,21 @@ impl App {
                         };
 
                         let mut should_auto_execute = self.config.auto_execute;
-                        if tool_call.function_call.name == "execute_shell_command" {
-                            if let Ok(args) = serde_json::from_str::<ShellCommandArgs>(
-                                &tool_call.function_call.arguments,
-                            ) {
-                                if permissions::is_command_allowed(
-                                    &args.command,
-                                    &self.config.allowed_command_prefixes,
-                                )
-                                .is_err()
-                                {
-                                    should_auto_execute = false; // Not in whitelist, require confirmation
+                        match self
+                            .tool_manager
+                            .is_safe_for_auto_execute(&tool_call, &self.config)
+                        {
+                            Ok(is_safe) => {
+                                if !is_safe {
+                                    should_auto_execute = false;
                                 }
-                            } else {
-                                should_auto_execute = false; // Malformed args, require confirmation
+                            }
+                            Err(e) => {
+                                let error_message = format!(
+                                    "Security check failed for tool call, please confirm manually: {e}"
+                                );
+                                eprintln!("{}", style(&error_message).red());
+                                should_auto_execute = false;
                             }
                         }
 

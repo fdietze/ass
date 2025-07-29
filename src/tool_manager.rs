@@ -70,6 +70,20 @@ impl ToolManager {
         tool.preview(&args_value, config, fsm)
     }
 
+    /// Checks if a tool call is safe for automatic execution.
+    pub fn is_safe_for_auto_execute(&self, tool_call: &ToolCall, config: &Config) -> Result<bool> {
+        let function_name = &tool_call.function_call.name;
+        let arguments = &tool_call.function_call.arguments;
+        let args_value: Value = serde_json::from_str(arguments)?;
+
+        let tool = self
+            .tools
+            .get(function_name)
+            .ok_or_else(|| anyhow!("Unknown tool: {function_name}"))?;
+
+        tool.is_safe_for_auto_execute(&args_value, config)
+    }
+
     /// Executes a tool call and returns the result as a `Message`.
     /// This function is designed to always succeed from the caller's perspective,
     /// returning a `Message`. Any failures in tool lookup, argument parsing,

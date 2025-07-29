@@ -4,6 +4,7 @@
 //! to run arbitrary shell commands.
 
 use crate::config::Config;
+use crate::permissions;
 use crate::tools::Tool;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -11,6 +12,7 @@ use console::style;
 use openrouter_api::models::tool::FunctionDescription;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::path::Path;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -85,6 +87,27 @@ Live output from the command will be printed to the console. The final captured 
     ) -> Result<String> {
         let args: ShellCommandArgs = serde_json::from_value(args.clone())?;
         execute_shell_command(&args.command, args.workdir.as_deref()).await
+    }
+
+    fn is_safe_for_auto_execute(&self, args: &Value, config: &Config) -> Result<bool> {
+        let args: ShellCommandArgs = serde_json::from_value(args.clone())?;
+
+        // Check command prefix
+        if permissions::is_command_allowed(&args.command, &config.allowed_command_prefixes).is_err()
+        {
+            return Ok(false);
+        }
+
+        // Check working directory
+        if let Some(workdir) = &args.workdir {
+            if permissions::is_path_accessible(Path::new(workdir), &config.accessible_paths)
+                .is_err()
+            {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
     }
 }
 

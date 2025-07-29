@@ -82,6 +82,15 @@ impl Tool for ListFilesTool {
         plan_list_files(&args, config)?;
         execute_list_files(&args, config)
     }
+
+    fn is_safe_for_auto_execute(&self, args: &Value, config: &Config) -> Result<bool> {
+        let args: ListFilesArgs = serde_json::from_value(args.clone())?;
+        if permissions::is_path_accessible(Path::new(&args.path), &config.accessible_paths).is_err()
+        {
+            return Ok(false);
+        }
+        Ok(true)
+    }
 }
 
 pub fn execute_list_files(args: &ListFilesArgs, config: &Config) -> Result<String> {

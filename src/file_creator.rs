@@ -169,6 +169,17 @@ If the file content comes from another file, instead of creating a file with the
         let mut manager = fsm.lock().unwrap();
         execute_create_files(&args, &mut manager)
     }
+
+    fn is_safe_for_auto_execute(&self, args: &Value, config: &Config) -> Result<bool> {
+        let args: CreateFileArgs = serde_json::from_value(args.clone())?;
+        for spec in &args.files {
+            let path = Path::new(&spec.file_path);
+            if permissions::is_path_accessible(path, &config.accessible_paths).is_err() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
 }
 
 pub fn execute_create_files(

@@ -312,6 +312,47 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
         let mut manager = fsm.lock().unwrap();
         execute_file_operations(&args, &mut manager, &config.accessible_paths)
     }
+
+    fn is_safe_for_auto_execute(&self, args: &Value, config: &Config) -> Result<bool> {
+        let args: TopLevelRequest = serde_json::from_value(args.clone())?;
+
+        for req in &args.inserts {
+            if permissions::is_path_accessible(Path::new(&req.file_path), &config.accessible_paths)
+                .is_err()
+            {
+                return Ok(false);
+            }
+        }
+
+        for req in &args.replaces {
+            if permissions::is_path_accessible(Path::new(&req.file_path), &config.accessible_paths)
+                .is_err()
+            {
+                return Ok(false);
+            }
+        }
+
+        for req in &args.moves {
+            if permissions::is_path_accessible(
+                Path::new(&req.source_file_path),
+                &config.accessible_paths,
+            )
+            .is_err()
+            {
+                return Ok(false);
+            }
+            if permissions::is_path_accessible(
+                Path::new(&req.dest_file_path),
+                &config.accessible_paths,
+            )
+            .is_err()
+            {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
 }
 
 static WHITESPACE_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s+").unwrap());

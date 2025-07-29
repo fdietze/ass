@@ -55,4 +55,10 @@ pub trait Tool: Send + Sync {
         config: &Config,
         fsm: Arc<Mutex<FileStateManager>>,
     ) -> Result<String>;
+
+    /// Checks if the tool call is safe to execute without user confirmation.
+    /// The default implementation returns `true`.
+    fn is_safe_for_auto_execute(&self, _args: &Value, _config: &Config) -> Result<bool> {
+        Ok(true)
+    }
 }
