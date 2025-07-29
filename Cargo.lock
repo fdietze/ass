@@ -83,34 +83,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
 
 [[package]]
-name = "ass"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "clap",
- "console",
- "fancy-regex",
- "fractional_index",
- "futures",
- "ignore",
- "once_cell",
- "openrouter_api",
- "rand 0.8.5",
- "regex",
- "serde",
- "serde_json",
- "sha1",
- "similar",
- "strip-ansi-escapes",
- "tempfile",
- "tokio",
- "tokio-util",
- "toml",
- "xdg",
-]
-
-[[package]]
 name = "async-stream"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -344,6 +316,34 @@ checksum = "1bfb12502f3fc46cca1bb51ac28df9d618d813cdc3d2f25b9fe775a34af26bb3"
 dependencies = [
  "generic-array",
  "typenum",
+]
+
+[[package]]
+name = "da"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "console",
+ "fancy-regex",
+ "fractional_index",
+ "futures",
+ "ignore",
+ "once_cell",
+ "openrouter_api",
+ "rand 0.8.5",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha1",
+ "similar",
+ "strip-ansi-escapes",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "xdg",
 ]
 
 [[package]]
@@ -983,7 +983,7 @@ checksum = "a4895175b425cb1f87721b59f0f286c2092bd4af812243672510e1ac53e2e0ad"
 [[package]]
 name = "openrouter_api"
 version = "0.1.6"
-source = "git+https://github.com/fdietze/openrouter_api.git?rev=aa0df39#aa0df39107467dd94c14ac38fa29a6a6b42e3ddd"
+source = "git+https://github.com/fdietze/openrouter_api.git?rev=064048f#064048f482dd0797de21f1e3e1f73de91f5c8b4c"
 dependencies = [
  "async-stream",
  "futures",
