@@ -40,9 +40,7 @@ impl Tool for ShellTool {
             name: "execute_shell_command".to_string(),
             description: Some(
                 "Executes a shell command.
-This tool is powerful and can have side effects. Use it with caution.
-The command will be executed in the current working directory of the application.
-Live output from the command will be printed to the console. The final captured output (stdout and stderr) will be returned to you."
+The output and the exit code will be returned. Always do a short analysis of the result."
                     .to_string(),
             ),
             strict: Some(true),

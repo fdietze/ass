@@ -17,7 +17,7 @@ use crate::file_state::FileState;
 
 #[derive(Default)]
 pub struct FileStateManager {
-    open_files: HashMap<String, FileState>,
+    pub open_files: HashMap<String, FileState>,
 }
 
 impl FileStateManager {

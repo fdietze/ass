@@ -1,10 +1,9 @@
-#![cfg(test)]
+// This file is a module of `file_state.rs`, so `cfg(test)` is not needed here.
 
-use crate::{
-    file_state::FileState,
-    patch::{InsertOp, PatchOperation, ReplaceOp},
-};
+use super::*;
+use crate::patch::{InsertOp, PatchOperation, ReplaceOp};
 use console::style;
+// Added missing imports that were causing compiler errors.
 use fractional_index::FractionalIndex;
 use std::{fs, path::PathBuf};
 use tempfile::Builder;

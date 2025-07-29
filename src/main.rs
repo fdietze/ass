@@ -17,7 +17,6 @@ mod file_editor;
 mod file_reader;
 mod file_state;
 mod file_state_manager;
-mod file_state_tests;
 mod list_files;
 mod patch;
 mod path_expander;

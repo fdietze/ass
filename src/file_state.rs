@@ -333,18 +333,17 @@ impl FileState {
         format!("{header}\n{body}")
     }
 
-    /// Extracts the content of lines within a given LID range, inclusive.
-    pub fn get_lines_in_range(
+    /// Extracts the content of lines within a given LID range, inclusive, using FractionalIndex.
+    pub fn get_content_in_range(
         &self,
-        start_lid_str: &str,
-        end_lid_str: &str,
+        start_lid: &FractionalIndex,
+        end_lid: &FractionalIndex,
     ) -> Result<Vec<(String, String)>> {
-        let (start_lid, _) = Self::parse_lid(start_lid_str)?;
-        let (end_lid, _) = Self::parse_lid(end_lid_str)?;
-
         if start_lid > end_lid {
             return Err(anyhow!(
-                "start_lid '{start_lid_str}' cannot be after end_lid '{end_lid_str}'"
+                "start_lid '{:?}' cannot be after end_lid '{:?}'",
+                start_lid,
+                end_lid
             ));
         }
 
@@ -354,15 +353,12 @@ impl FileState {
             .map(|(_, (content, suffix))| (content.clone(), suffix.clone()))
             .collect();
 
-        // This check is important. An empty result can be valid (e.g., copying an empty range),
-        // but we should error if the LIDs themselves were not found in the file, which indicates
-        // a more serious logic error from the AI.
         if lines_in_range.is_empty() {
-            if !self.lines.contains_key(&start_lid) && start_lid_str != "_START_OF_FILE_" {
-                return Err(anyhow!("start_lid '{start_lid_str}' not found in file."));
+            if !self.lines.contains_key(start_lid) {
+                return Err(anyhow!("start_lid '{:?}' not found in file.", start_lid));
             }
-            if !self.lines.contains_key(&end_lid) {
-                return Err(anyhow!("end_lid '{end_lid_str}' not found in file."));
+            if !self.lines.contains_key(end_lid) {
+                return Err(anyhow!("end_lid '{:?}' not found in file.", end_lid));
             }
         }
 
@@ -423,3 +419,7 @@ impl FileState {
         Ok((index, suffix_part.to_string()))
     }
 }
+
+#[cfg(test)]
+#[path = "file_state_tests.rs"]
+mod file_state_tests;

@@ -67,6 +67,7 @@ pub enum Position {
     StartOfFile,
     EndOfFile,
     AfterAnchor,
+    BeforeAnchor, // New position
 }
 
 #[derive(Deserialize, Debug, Serialize)]
@@ -75,15 +76,15 @@ pub struct InsertRequest {
     pub file_path: String,
     pub new_content: Vec<String>,
     pub at_position: Position,
-    pub anchor: Option<Anchor>,
+    pub context_anchor: Option<Anchor>,
 }
 
 #[derive(Deserialize, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ReplaceRequest {
     pub file_path: String,
-    pub range_start_anchor: Anchor,
-    pub range_end_anchor: Anchor,
+    pub anchor_range_begin: Option<Anchor>, // Renamed for inclusivity
+    pub anchor_range_end: Option<Anchor>,   // Renamed for inclusivity
     pub new_content: Vec<String>,
 }
 
@@ -91,11 +92,11 @@ pub struct ReplaceRequest {
 #[serde(rename_all = "snake_case")]
 pub struct MoveRequest {
     pub source_file_path: String,
-    pub source_range_start_anchor: Anchor,
-    pub source_range_end_anchor: Anchor,
+    pub source_range_start_anchor: Option<Anchor>, // Renamed for inclusivity
+    pub source_range_end_anchor: Option<Anchor>,   // Renamed for inclusivity
     pub dest_file_path: String,
     pub dest_at_position: Position,
-    pub dest_anchor: Option<Anchor>,
+    pub dest_context_anchor: Option<Anchor>,
 }
 
 /// Represents the successfully planned operations to be executed.
@@ -115,25 +116,18 @@ impl Tool for FileEditorTool {
         FunctionDescription {
             name: "edit_file".to_string(),
             description: Some(
-                r#"Atomically performs a series of file editing operations using a robust anchor-based system. Edit multiple files at once.
-After a successful edit, this tool's output provides the new file hash. You have the latest file state; DO NOT call read_file afterward. LIDs are stable across edits, unless the line was removed.
+                r#"Atomically performs file edits using a robust, inclusive anchor system for move and replace operations.
 
-All operations are planned based on the files' initial state. Line Anchors (LID + content) MUST be valid at the beginning of the tool call.
+**CRITICAL: For both `moves` and `replaces`, the specified anchors are INCLUSIVE. The anchor lines themselves and everything between them will be part of the operation.**
 
-**Execution Order**: Operations are always executed in a fixed order: 1. Moves, 2. Replaces, 3. Inserts.
+- To replace the entire file, set both `anchor_range_begin` and `anchor_range_end` to `null`.
 
-**Line Anchors**: An anchor is a combination of a line's unique identifier (`lid`) and its exact `content`. Both must be provided and must match the file exactly for an operation to succeed.
+**Execution Order**: 1. Moves, 2. Replaces, 3. Inserts.
 
 **Operations**:
-- `inserts`: Adds new lines. Position can be `start_of_file`, `end_of_file`, or `after_anchor`.
-- `replaces`: Replaces a range of lines. To delete, provide an empty `new_content` array.
-- `moves`: Transfers blocks of lines.
-
-**Correctness**:
-- Pay special attention to balancing of parentheses, braces, and other syntax elements. Ranges should not cross these boundaries.
-
-**Output and Verification**:
-- After a successful edit, the tool provides a diff of what has been written to disk. Verify that this diff matches your expectations.
+- `inserts`: Adds new lines, positioned relative to a context anchor.
+- `replaces`: Replaces a range of lines from `anchor_range_begin` to `anchor_range_end`, including the anchor lines themselves.
+- `moves`: Moves a range of lines from `source_range_start_anchor` to `source_range_end_anchor`, including the anchor lines themselves.
 "#
                     .to_string(),
             ),
@@ -143,106 +137,86 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                 "properties": {
                     "moves": {
                         "type": "array",
-                        "description": "A list of move operations to perform.",
+                        "description": "A list of move operations to perform. The source range is INCLUSIVE.",
                         "items": {
                             "type": "object",
                             "title": "Move Operation",
                             "properties": {
                                 "source_file_path": { "type": "string", "description": "Path of the file to move lines from." },
                                 "source_range_start_anchor": {
-                                    "type": "object",
-                                    "title": "Source Range Start Anchor",
-                                    "description": "An anchor for the first line in the source range. The range is inclusive, so this line WILL be part of the moved content.",
+                                    "type": ["object", "null"],
+                                    "title": "Source Range Start Anchor (Inclusive)",
+                                    "description": "An anchor for the FIRST line in the source range. This line WILL be part of the moved content.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
-                                        "line_content": {
-                                            "type": "string",
-                                            "description": "The exact, single-line content of the anchor line. This field MUST NOT contain newlines and is used for validation only.",
-                                            "pattern": "^[^\r\n]*$"
-                                        }
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line." },
+                                        "line_content": { "type": "string", "description": "The exact, single-line content of the anchor line." }
                                     },
                                     "additionalProperties": false,
                                     "required": ["lid", "line_content"]
                                 },
                                 "source_range_end_anchor": {
-                                    "type": "object",
-                                    "title": "Source Range End Anchor",
-                                    "description": "An anchor for the last line in the source range. The range is inclusive, so this line WILL be part of the moved content.",
+                                    "type": ["object", "null"],
+                                    "title": "Source Range End Anchor (Inclusive)",
+                                    "description": "An anchor for the LAST line in the source range. This line WILL be part of the moved content.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
-                                        "line_content": {
-                                            "type": "string",
-                                            "description": "The exact, single-line content of the anchor line. This field MUST NOT contain newlines and is used for validation only.",
-                                            "pattern": "^[^\r\n]*$"
-                                        }
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line." },
+                                        "line_content": { "type": "string", "description": "The exact, single-line content of the anchor line." }
                                     },
                                     "additionalProperties": false,
                                     "required": ["lid", "line_content"]
                                 },
                                 "dest_file_path": { "type": "string", "description": "Path of the file to move lines to." },
-                                "dest_at_position": { "enum": ["start_of_file", "end_of_file", "after_anchor"], "description": "Specifies where to insert the content in the destination file." },
-                                "dest_anchor": {
+                                "dest_at_position": { "enum": ["start_of_file", "end_of_file", "after_anchor", "before_anchor"], "description": "Specifies where to insert the content in the destination file." },
+                                "dest_context_anchor": {
                                     "type": ["object", "null"],
-                                    "title": "Destination Anchor",
-                                    "description": "An anchor to uniquely identify the destination line. Required only when 'dest_at_position' is 'after_anchor'.",
+                                    "title": "Destination Context Anchor",
+                                    "description": "An anchor to uniquely identify the destination line. Required only when 'dest_at_position' is 'after_anchor' or 'before_anchor'.",
                                     "properties": {
                                         "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
-                                        "line_content": {
-                                            "type": "string",
-                                            "description": "The exact, single-line content of the anchor line. This field MUST NOT contain newlines and is used for validation only.",
-                                            "pattern": "^[^\r\n]*$"
-                                        }
+                                        "line_content": { "type": "string", "description": "The exact, single-line content of the anchor line.", "pattern": "^[^\r\n]*$" }
                                     },
                                     "additionalProperties": false,
                                     "required": ["lid", "line_content"]
                                 }
                             },
                             "additionalProperties": false,
-                            "required": ["source_file_path", "source_range_start_anchor", "source_range_end_anchor", "dest_file_path", "dest_at_position", "dest_anchor"]
+                            "required": ["source_file_path", "source_range_start_anchor", "source_range_end_anchor", "dest_file_path", "dest_at_position", "dest_context_anchor"]
                         }
                     },
                     "replaces": {
                         "type": "array",
-                        "description": "A list of replace operations to perform.",
+                        "description": "A list of replace operations to perform. The range is INCLUSIVE.",
                         "items": {
                             "type": "object",
                             "title": "Replace Operation",
                             "properties": {
                                 "file_path": { "type": "string", "description": "The relative path to the file to be modified." },
-                                "range_start_anchor": {
-                                    "type": "object",
-                                    "title": "Range Start Anchor",
-                                    "description": "An anchor for the first line in the range to replace. The range is inclusive, so this line WILL be replaced.",
+                                "anchor_range_begin": {
+                                    "type": ["object", "null"],
+                                    "title": "Range Begin Anchor (Inclusive)",
+                                    "description": "An anchor for the FIRST line in the range to replace. This line WILL be replaced. If null, the range starts at the beginning of the file.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
-                                        "line_content": {
-                                            "type": "string",
-                                            "description": "The exact, single-line content of the anchor line. This field MUST NOT contain newlines and is used for validation only.",
-                                            "pattern": "^[^\r\n]*$"
-                                        }
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line." },
+                                        "line_content": { "type": "string", "description": "The exact, single-line content of the anchor line." }
                                     },
                                     "additionalProperties": false,
                                     "required": ["lid", "line_content"]
                                 },
-                                "range_end_anchor": {
-                                    "type": "object",
-                                    "title": "Range End Anchor",
-                                    "description": "An anchor for the last line in the range to replace. For a single-line operation, this should be the same as 'range_start_anchor'. The range is inclusive, so this line WILL be replaced.",
+                                "new_content": { "type": "array", "items": { "type": "string" }, "description": "The new lines to replace the old range with. Use an empty array to delete." },
+                                "anchor_range_end": {
+                                    "type": ["object", "null"],
+                                    "title": "Range End Anchor (Inclusive)",
+                                    "description": "An anchor for the LAST line in the range to replace. This line WILL be replaced. If null, the range extends to the end of the file.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
-                                        "line_content": {
-                                            "type": "string",
-                                            "description": "The exact, single-line content of the anchor line. This field MUST NOT contain newlines and is used for validation only.",
-                                            "pattern": "^[^\r\n]*$"
-                                        }
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line." },
+                                        "line_content": { "type": "string", "description": "The exact, single-line content of the anchor line." }
                                     },
                                     "additionalProperties": false,
                                     "required": ["lid", "line_content"]
-                                },
-                                "new_content": { "type": "array", "items": { "type": "string" }, "description": "The new lines to replace the old range with. Use an empty array to delete." }
+                                }
                             },
                             "additionalProperties": false,
-                            "required": ["file_path", "range_start_anchor", "range_end_anchor", "new_content"]
+                            "required": ["file_path", "anchor_range_begin", "new_content", "anchor_range_end"]
                         }
                     },
                     "inserts": {
@@ -253,26 +227,22 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                             "title": "Insert Operation",
                             "properties": {
                                 "file_path": { "type": "string", "description": "The relative path to the file to be modified." },
-                                "new_content": { "type": "array", "items": { "type": "string" }, "description": "The new lines of content to insert." },
-                                "at_position": { "enum": ["start_of_file", "end_of_file", "after_anchor"], "description": "Specifies where to insert the content." },
-                                "anchor": {
+                                "at_position": { "enum": ["start_of_file", "end_of_file", "after_anchor", "before_anchor"], "description": "Specifies where to insert the content." },
+                                "context_anchor": {
                                     "type": ["object", "null"],
-                                    "title": "Anchor",
-                                    "description": "An anchor to uniquely identify the line to insert after. Required only when 'at_position' is 'after_anchor'.",
+                                    "title": "Context Anchor",
+                                    "description": "An anchor to uniquely identify the line to insert before or after. Required only when 'at_position' is 'after_anchor' or 'before_anchor'.",
                                     "properties": {
                                         "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
-                                        "line_content": {
-                                            "type": "string",
-                                            "description": "The exact, single-line content of the anchor line. This field MUST NOT contain newlines and is used for validation only.",
-                                            "pattern": "^[^\r\n]*$"
-                                        }
+                                        "line_content": { "type": "string", "description": "The exact, single-line content of the anchor line.", "pattern": "^[^\r\n]*$" }
                                     },
                                     "additionalProperties": false,
                                     "required": ["lid", "line_content"]
-                                }
+                                },
+                                "new_content": { "type": "array", "items": { "type": "string" }, "description": "The new lines of content to insert." }
                             },
                             "additionalProperties": false,
-                            "required": ["file_path", "new_content", "at_position", "anchor"]
+                            "required": ["file_path", "at_position", "context_anchor", "new_content"]
                         }
                     }
                 },
@@ -469,28 +439,43 @@ pub fn plan_file_operations(
             permissions::is_path_accessible(Path::new(&req.source_file_path), accessible_paths)?;
             permissions::is_path_accessible(Path::new(&req.dest_file_path), accessible_paths)?;
 
-            let (source_path, content_to_transfer) = {
+            let (source_path, content_to_transfer, delete_op) = {
                 let source_state = file_state_manager.open_file(&req.source_file_path)?;
+
+                let start_anchor = req
+                    .source_range_start_anchor
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("`source_range_start_anchor` is required."))?;
+                let end_anchor = req
+                    .source_range_end_anchor
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("`source_range_end_anchor` is required."))?;
+
                 validate_anchor(
                     source_state,
-                    &req.source_range_start_anchor.lid,
-                    &req.source_range_start_anchor.line_content,
+                    &start_anchor.lid,
+                    &start_anchor.line_content,
                     "move",
                     "source_range_start_anchor",
                 )?;
                 validate_anchor(
                     source_state,
-                    &req.source_range_end_anchor.lid,
-                    &req.source_range_end_anchor.line_content,
+                    &end_anchor.lid,
+                    &end_anchor.line_content,
                     "move",
                     "source_range_end_anchor",
                 )?;
-                source_state
-                    .get_lines_in_range(
-                        &req.source_range_start_anchor.lid,
-                        &req.source_range_end_anchor.lid,
-                    )
-                    .map(|content| (source_state.path.clone(), content))?
+
+                let start_lid = FileState::parse_lid(&start_anchor.lid)?.0;
+                let end_lid = FileState::parse_lid(&end_anchor.lid)?.0;
+
+                let content = source_state.get_content_in_range(&start_lid, &end_lid)?;
+                let op = PatchOperation::Replace(ReplaceOp {
+                    start_lid,
+                    end_lid,
+                    content: vec![],
+                });
+                (source_state.path.clone(), content, op)
             };
 
             let dest_state = file_state_manager.open_file(&req.dest_file_path)?;
@@ -498,25 +483,38 @@ pub fn plan_file_operations(
                 Position::StartOfFile => None,
                 Position::EndOfFile => dest_state.lines.last_key_value().map(|(k, _)| k.clone()),
                 Position::AfterAnchor => {
-                    let anchor = req.dest_anchor.as_ref().ok_or_else(|| {
-                        anyhow!("`dest_anchor` is required for `after_anchor` position.")
+                    let anchor = req.dest_context_anchor.as_ref().ok_or_else(|| {
+                        anyhow!("`dest_context_anchor` is required for `after_anchor` position.")
                     })?;
                     validate_anchor(
                         dest_state,
                         &anchor.lid,
                         &anchor.line_content,
                         "move",
-                        "dest_anchor",
+                        "dest_context_anchor",
                     )?;
                     Some(FileState::parse_lid(&anchor.lid)?.0)
                 }
+                Position::BeforeAnchor => {
+                    let anchor = req.dest_context_anchor.as_ref().ok_or_else(|| {
+                        anyhow!("`dest_context_anchor` is required for `before_anchor` position.")
+                    })?;
+                    validate_anchor(
+                        dest_state,
+                        &anchor.lid,
+                        &anchor.line_content,
+                        "move",
+                        "dest_context_anchor",
+                    )?;
+                    let anchor_lid = FileState::parse_lid(&anchor.lid)?.0;
+                    // To insert *before* the anchor, we need the LID of the line *preceding* the anchor.
+                    dest_state
+                        .lines
+                        .range(..anchor_lid)
+                        .next_back()
+                        .map(|(k, _)| k.clone())
+                }
             };
-
-            let delete_op = PatchOperation::Replace(ReplaceOp {
-                start_lid: FileState::parse_lid(&req.source_range_start_anchor.lid)?.0,
-                end_lid: FileState::parse_lid(&req.source_range_end_anchor.lid)?.0,
-                content: vec![],
-            });
 
             let insert_op = PatchOperation::Insert(InsertOp {
                 after_lid,
@@ -547,21 +545,36 @@ pub fn plan_file_operations(
     for (i, req) in args.replaces.iter().enumerate() {
         let result: Result<(PathBuf, PatchOperation)> = (|| {
             permissions::is_path_accessible(Path::new(&req.file_path), accessible_paths)?;
+
             let file_state = file_state_manager.open_file(&req.file_path)?;
-            validate_anchor(
-                file_state,
-                &req.range_start_anchor.lid,
-                &req.range_start_anchor.line_content,
-                "replace",
-                "range_start_anchor",
-            )?;
-            validate_anchor(
-                file_state,
-                &req.range_end_anchor.lid,
-                &req.range_end_anchor.line_content,
-                "replace",
-                "range_end_anchor",
-            )?;
+
+            let start_lid = if let Some(anchor) = &req.anchor_range_begin {
+                validate_anchor(
+                    file_state,
+                    &anchor.lid,
+                    &anchor.line_content,
+                    "replace",
+                    "anchor_range_begin",
+                )?;
+                Some(FileState::parse_lid(&anchor.lid)?.0)
+            } else {
+                // No start anchor means start of file
+                file_state.lines.first_key_value().map(|(k, _)| k.clone())
+            };
+
+            let end_lid = if let Some(anchor) = &req.anchor_range_end {
+                validate_anchor(
+                    file_state,
+                    &anchor.lid,
+                    &anchor.line_content,
+                    "replace",
+                    "anchor_range_end",
+                )?;
+                Some(FileState::parse_lid(&anchor.lid)?.0)
+            } else {
+                // No end anchor means end of file
+                file_state.lines.last_key_value().map(|(k, _)| k.clone())
+            };
 
             let new_content_with_suffixes: Vec<(String, String)> = req
                 .new_content
@@ -569,11 +582,25 @@ pub fn plan_file_operations(
                 .map(|line| (line.clone(), crate::file_state::generate_random_suffix()))
                 .collect();
 
-            let internal_op = PatchOperation::Replace(ReplaceOp {
-                start_lid: FileState::parse_lid(&req.range_start_anchor.lid)?.0,
-                end_lid: FileState::parse_lid(&req.range_end_anchor.lid)?.0,
-                content: new_content_with_suffixes,
-            });
+            let internal_op = match (start_lid, end_lid) {
+                (Some(start), Some(end)) => {
+                    // Standard inclusive range replace
+                    PatchOperation::Replace(ReplaceOp {
+                        start_lid: start,
+                        end_lid: end,
+                        content: new_content_with_suffixes,
+                    })
+                }
+                _ => {
+                    // This handles cases where the file is empty and both LIDs are None.
+                    // We treat it as an insert into an empty file.
+                    PatchOperation::Insert(InsertOp {
+                        after_lid: None,
+                        content: new_content_with_suffixes,
+                    })
+                }
+            };
+
             Ok((file_state.path.clone(), internal_op))
         })();
 
@@ -598,17 +625,37 @@ pub fn plan_file_operations(
                 Position::StartOfFile => None,
                 Position::EndOfFile => file_state.lines.last_key_value().map(|(k, _)| k.clone()),
                 Position::AfterAnchor => {
-                    let anchor = req.anchor.as_ref().ok_or_else(|| {
-                        anyhow!("`anchor` is required for `after_anchor` position.")
+                    let anchor = req.context_anchor.as_ref().ok_or_else(|| {
+                        anyhow!("`context_anchor` is required for `after_anchor` position.")
                     })?;
                     validate_anchor(
                         file_state,
                         &anchor.lid,
                         &anchor.line_content,
                         "insert",
-                        "anchor",
+                        "context_anchor",
                     )?;
                     Some(FileState::parse_lid(&anchor.lid)?.0)
+                }
+                Position::BeforeAnchor => {
+                    let anchor = req.context_anchor.as_ref().ok_or_else(|| {
+                        anyhow!("`context_anchor` is required for `before_anchor` position.")
+                    })?;
+                    validate_anchor(
+                        file_state,
+                        &anchor.lid,
+                        &anchor.line_content,
+                        "insert",
+                        "context_anchor",
+                    )?;
+                    let anchor_lid = FileState::parse_lid(&anchor.lid)?.0;
+                    // To insert *before* the anchor, we need the LID of the line *preceding* the anchor.
+                    // We search backwards from the anchor's LID to find the key of the previous line.
+                    file_state
+                        .lines
+                        .range(..anchor_lid)
+                        .next_back()
+                        .map(|(k, _)| k.clone())
                 }
             };
 
