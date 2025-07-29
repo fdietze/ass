@@ -53,11 +53,12 @@ Live output from the command will be printed to the console. The final captured 
                         "description": "The shell command to execute."
                     },
                     "workdir": {
-                        "type": "string",
+                        "type": ["string", "null"],
                         "description": "The working directory to run the command in. Defaults to the current working directory."
                     }
                 },
-                "required": ["command"]
+                "additionalProperties": false,
+                "required": ["command", "workdir"]
             }),
         }
     }

@@ -54,6 +54,7 @@ impl Tool for ListFilesTool {
                         "description": "The path to the directory to list files from."
                     }
                 },
+                "additionalProperties": false,
                 "required": ["path"]
             }),
         }

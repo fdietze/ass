@@ -127,14 +127,17 @@ File: jokes.txt | Hash: 931d3b24 | Lines: 1-1/1
                                                 "description": "The 1-indexed, inclusive, ending line number of the range."
                                             }
                                         },
+                                        "additionalProperties": false,
                                         "required": ["start_line", "end_line"]
                                     }
                                 }
                             },
-                            "required": ["file_path"]
+                            "additionalProperties": false,
+                            "required": ["file_path", "ranges"]
                         }
                     }
                 },
+                "additionalProperties": false,
                 "required": ["files"]
             }),
         }

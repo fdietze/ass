@@ -161,6 +161,7 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                             "pattern": "^[^\r\n]*$"
                                         }
                                     },
+                                    "additionalProperties": false,
                                     "required": ["lid", "line_content"]
                                 },
                                 "source_range_end_anchor": {
@@ -175,12 +176,13 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                             "pattern": "^[^\r\n]*$"
                                         }
                                     },
+                                    "additionalProperties": false,
                                     "required": ["lid", "line_content"]
                                 },
                                 "dest_file_path": { "type": "string", "description": "Path of the file to move lines to." },
                                 "dest_at_position": { "enum": ["start_of_file", "end_of_file", "after_anchor"], "description": "Specifies where to insert the content in the destination file." },
                                 "dest_anchor": {
-                                    "type": "object",
+                                    "type": ["object", "null"],
                                     "title": "Destination Anchor",
                                     "description": "An anchor to uniquely identify the destination line. Required only when 'dest_at_position' is 'after_anchor'.",
                                     "properties": {
@@ -191,10 +193,12 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                             "pattern": "^[^\r\n]*$"
                                         }
                                     },
+                                    "additionalProperties": false,
                                     "required": ["lid", "line_content"]
                                 }
                             },
-                            "required": ["source_file_path", "source_range_start_anchor", "source_range_end_anchor", "dest_file_path", "dest_at_position"]
+                            "additionalProperties": false,
+                            "required": ["source_file_path", "source_range_start_anchor", "source_range_end_anchor", "dest_file_path", "dest_at_position", "dest_anchor"]
                         }
                     },
                     "replaces": {
@@ -217,6 +221,7 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                             "pattern": "^[^\r\n]*$"
                                         }
                                     },
+                                    "additionalProperties": false,
                                     "required": ["lid", "line_content"]
                                 },
                                 "range_end_anchor": {
@@ -231,10 +236,12 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                             "pattern": "^[^\r\n]*$"
                                         }
                                     },
+                                    "additionalProperties": false,
                                     "required": ["lid", "line_content"]
                                 },
                                 "new_content": { "type": "array", "items": { "type": "string" }, "description": "The new lines to replace the old range with. Use an empty array to delete." }
                             },
+                            "additionalProperties": false,
                             "required": ["file_path", "range_start_anchor", "range_end_anchor", "new_content"]
                         }
                     },
@@ -249,7 +256,7 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                 "new_content": { "type": "array", "items": { "type": "string" }, "description": "The new lines of content to insert." },
                                 "at_position": { "enum": ["start_of_file", "end_of_file", "after_anchor"], "description": "Specifies where to insert the content." },
                                 "anchor": {
-                                    "type": "object",
+                                    "type": ["object", "null"],
                                     "title": "Anchor",
                                     "description": "An anchor to uniquely identify the line to insert after. Required only when 'at_position' is 'after_anchor'.",
                                     "properties": {
@@ -260,14 +267,17 @@ All operations are planned based on the files' initial state. Line Anchors (LID 
                                             "pattern": "^[^\r\n]*$"
                                         }
                                     },
+                                    "additionalProperties": false,
                                     "required": ["lid", "line_content"]
                                 }
                             },
-                            "required": ["file_path", "new_content", "at_position"]
+                            "additionalProperties": false,
+                            "required": ["file_path", "new_content", "at_position", "anchor"]
                         }
                     }
                 },
-                "required": []
+                "additionalProperties": false,
+                "required": ["moves", "replaces", "inserts"]
             }),
         }
     }

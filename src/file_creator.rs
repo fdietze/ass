@@ -106,10 +106,12 @@ If the file content comes from another file, instead of creating a file with the
                                     "description": "The initial content for the new file."
                                 }
                             },
+                            "additionalProperties": false,
                             "required": ["file_path", "content"]
                         }
                     }
                 },
+                "additionalProperties": false,
                 "required": ["files"]
             }),
         }
