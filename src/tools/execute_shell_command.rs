@@ -12,6 +12,8 @@ use console::style;
 use openrouter_api::models::tool::FunctionDescription;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use serde_with::NoneAsEmptyString;
+use serde_with::serde_as;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -20,10 +22,12 @@ use tokio::process::Command;
 
 use crate::file_state_manager::FileStateManager;
 
+#[serde_as]
 #[derive(Deserialize, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ShellCommandArgs {
     pub command: String,
+    #[serde_as(as = "NoneAsEmptyString")]
     pub workdir: Option<String>,
 }
 
