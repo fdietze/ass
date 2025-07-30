@@ -66,12 +66,21 @@ The output and the exit code will be returned. Always do a short analysis of the
     fn preview(
         &self,
         args: &Value,
-        _config: &Config,
+        config: &Config,
         _fsm: Arc<Mutex<FileStateManager>>,
     ) -> Result<String> {
         let args: ShellCommandArgs = serde_json::from_value(args.clone())?;
         let mut output = vec![];
         if let Some(workdir) = args.workdir {
+            // Validate working directory
+            if permissions::is_path_accessible(Path::new(&workdir), &config.accessible_paths)
+                .is_err()
+            {
+                return Err(anyhow!(
+                    "Cannot preview: working directory '{}' is not accessible",
+                    workdir
+                ));
+            }
             output.push(format!("Workdir: {workdir}"));
         }
         output.push(format!("$ {}", style(args.command).bold()));

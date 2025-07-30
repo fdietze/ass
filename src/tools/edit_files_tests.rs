@@ -1,12 +1,9 @@
 //! # File Editor Tests
 
-use crate::{
-    config::Config,
-    file_state::FileState,
-    file_state_manager::FileStateManager,
-    tools::Tool,
-};
 use super::{Anchor, FileEditorTool};
+use crate::{
+    config::Config, file_state::FileState, file_state_manager::FileStateManager, tools::Tool,
+};
 use std::{
     fs,
     path::PathBuf,
