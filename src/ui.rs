@@ -285,6 +285,16 @@ impl App {
                 }
                 AppState::ProcessingPrompt(prompt) => {
                     display_user_message(prompt, &self.config, &self.file_state_manager).await?;
+                    // Print enabled tools and model after user message
+                    let tool_names: Vec<String> = self.tool_manager.get_all_schemas()
+                        .iter()
+                        .filter_map(|api_tool| match api_tool {
+                            openrouter_api::models::tool::Tool::Function { function } => Some(function.name.clone()),
+                        })
+                        .collect();
+                    println!("tools: {}", tool_names.join(", "));
+                    println!("model: {}", self.config.model);
+
 
                     let final_prompt = {
                         let mut fsm = self.file_state_manager.lock().unwrap();
@@ -310,6 +320,7 @@ impl App {
 
     fn spawn_llm_call(&self) -> AppState {
         let tools = self.tool_manager.get_all_schemas();
+
 
         let request = ChatCompletionRequest {
             model: self.config.model.clone(),

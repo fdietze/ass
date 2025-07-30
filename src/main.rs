@@ -44,16 +44,28 @@ async fn main() -> Result<()> {
         .with_base_url(&config.base_url)?
         .with_timeout(Duration::from_secs(config.timeout_seconds))
         .with_api_key(api_key)?;
-
+    // Always print backend
     println!("Backend: {:?}", config.backend);
-    println!("Model: {}", config.model);
 
     let mut tool_manager = ToolManager::new();
+    // Register tools
     tool_manager.register(Box::new(tools::FileCreatorTool));
     tool_manager.register(Box::new(tools::FileEditorTool));
     tool_manager.register(Box::new(tools::FileReaderTool));
     tool_manager.register(Box::new(tools::ListFilesTool));
     tool_manager.register(Box::new(tools::ShellTool));
+    // Collect tool names
+    let schemas = tool_manager.get_all_schemas();
+    let tool_names: Vec<String> = schemas.iter()
+        .filter_map(|api_tool| match api_tool {
+            openrouter_api::models::tool::Tool::Function { function } => Some(function.name.clone()),
+        })
+        .collect();
+    // If no initial user message, print tools and model
+    if cli.prompt.clone().unwrap_or_default().is_empty() {
+        println!("tools: {}", tool_names.join(", "));
+        println!("model: {}", config.model);
+    }
     let tool_manager = Arc::new(tool_manager);
 
     let mut app = ui::App::new(config.clone(), client, tool_manager);
