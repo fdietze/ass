@@ -1,57 +1,30 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use clap::Parser;
 use console::style;
-use openrouter_api::{OpenRouterClient, types::chat::Message};
+use openrouter_api::types::chat::Message;
 use std::sync::Arc;
-use std::time::Duration;
 
-use crate::tool_collection::ToolCollection;
+use da::{agent::Agent, tool_collection::ToolCollection};
 
-mod backend;
 mod cli;
-mod config;
-mod diff;
-mod enricher;
-mod file_state;
-mod file_state_manager;
-mod patch;
-mod path_expander;
-mod permissions;
-mod prompt_builder;
-mod streaming_executor;
-mod tool_collection;
-mod tools;
 mod ui;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = cli::Cli::parse();
-    let config = config::load(&cli.overrides)?;
+    let config = da::config::load(&cli.overrides)?;
 
-    let api_key = if let Some(env_var) = config.backend.config().api_key_env_var {
-        match std::env::var(env_var) {
-            Ok(val) => val,
-            Err(_) => bail!("environment variable {} not set", env_var),
-        }
-    } else {
-        // TODO: only call .with_api_key if let Some(config.backend.api_key_env_var())
-        "sk-or-v1-0000000000000000000000000000000000000000000000000000000000000000".to_string()
-    };
-
-    let client = OpenRouterClient::new()
-        .with_base_url(&config.base_url)?
-        .with_timeout(Duration::from_secs(config.timeout_seconds))
-        .with_api_key(api_key)?;
+    let client = da::client::initialize_client(&config)?;
     // Always print backend
     println!("Backend: {:?}", config.backend);
 
     let mut tool_collection = ToolCollection::new();
     // Register tools
-    tool_collection.register(Box::new(tools::FileCreatorTool));
-    tool_collection.register(Box::new(tools::FileEditorTool));
-    tool_collection.register(Box::new(tools::FileReaderTool));
-    tool_collection.register(Box::new(tools::ListFilesTool));
-    tool_collection.register(Box::new(tools::ShellTool));
+    tool_collection.register(Box::new(da::tools::FileCreatorTool));
+    tool_collection.register(Box::new(da::tools::FileEditorTool));
+    tool_collection.register(Box::new(da::tools::FileReaderTool));
+    tool_collection.register(Box::new(da::tools::ListFilesTool));
+    tool_collection.register(Box::new(da::tools::ShellTool));
     // Collect tool names
     let schemas = tool_collection.get_all_schemas();
     let tool_names: Vec<String> = schemas
@@ -67,16 +40,16 @@ async fn main() -> Result<()> {
     }
     let tool_collection = Arc::new(tool_collection);
 
-    let mut app = ui::App::new(config.clone(), client, tool_collection);
+    let mut agent = Agent::new(config.clone(), Some(client), tool_collection);
 
     // Only process system prompt if one is configured
-    if let Some(system_prompt) = &app.config.system_prompt {
+    if let Some(system_prompt) = &agent.config.system_prompt {
         let prompt_data = {
-            let mut fsm = app.file_state_manager.lock().unwrap();
-            prompt_builder::process_prompt(system_prompt, &app.config, &mut fsm)?
+            let mut fsm = agent.file_state_manager.lock().unwrap();
+            da::prompt_builder::process_prompt(system_prompt, &agent.config, &mut fsm)?
         };
 
-        if app.config.show_system_prompt {
+        if agent.config.show_system_prompt {
             println!("[{}]", style("system").blue());
             println!("{system_prompt}"); // Print the original, un-expanded prompt
 
@@ -99,8 +72,10 @@ async fn main() -> Result<()> {
             tool_calls: None,
             tool_call_id: None,
         };
-        app.messages.push(system_message);
+        agent.messages.push(system_message);
     }
+
+    let mut app = ui::App::new(agent);
     app.run(&cli.prompt.unwrap_or_default()).await?;
 
     Ok(())

@@ -1,7 +1,7 @@
-use crate::config::ConfigLayer;
 use clap::Parser;
+use da::config::ConfigLayer;
 
-/// A simple command-line agent
+/// A command-line interface for the `da` agent.
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Cli {
