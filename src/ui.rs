@@ -3,7 +3,7 @@ use crate::file_state_manager::FileStateManager;
 use crate::prompt_builder;
 
 use crate::streaming_executor;
-use crate::tool_manager::ToolManager;
+use crate::tool_collection::ToolCollection;
 use anyhow::Result;
 use console::style;
 use openrouter_api::models::tool::ToolCall;
@@ -36,7 +36,7 @@ pub struct App {
     pub client: Arc<OpenRouterClient<Ready>>,
     pub messages: Vec<Message>,
     pub file_state_manager: Arc<Mutex<FileStateManager>>,
-    pub tool_manager: Arc<ToolManager>,
+    pub tool_collection: Arc<ToolCollection>,
     pub state: AppState,
     stdin_receiver: mpsc::Receiver<Option<String>>,
 }
@@ -45,7 +45,7 @@ impl App {
     pub fn new(
         config: Config,
         client: OpenRouterClient<Ready>,
-        tool_manager: Arc<ToolManager>,
+        tool_collection: Arc<ToolCollection>,
     ) -> Self {
         let _file_state_manager = FileStateManager::new();
         Self {
@@ -53,7 +53,7 @@ impl App {
             client: Arc::new(client),
             messages: Vec::new(),
             file_state_manager: Arc::new(Mutex::new(FileStateManager::new())),
-            tool_manager,
+            tool_collection,
             state: AppState::Initializing,
             stdin_receiver: spawn_stdin_channel(),
         }
@@ -131,7 +131,7 @@ impl App {
                             style(format!("tool: {}", tool_call.function_call.name)).magenta()
                         );
                         match self
-                            .tool_manager
+                            .tool_collection
                             .preview_tool_call(
                                 &tool_call,
                                 &self.config,
@@ -162,7 +162,7 @@ impl App {
 
                         let mut should_auto_execute = self.config.auto_execute;
                         match self
-                            .tool_manager
+                            .tool_collection
                             .is_safe_for_auto_execute(&tool_call, &self.config)
                         {
                             Ok(is_safe) => {
@@ -183,7 +183,7 @@ impl App {
                             // Automatically execute the tool without confirmation.
                             let tool_to_execute = tool_calls_queue.pop_front().unwrap();
                             let result_msg = self
-                                .tool_manager
+                                .tool_collection
                                 .execute_tool_call(
                                     &tool_to_execute,
                                     &self.config,
@@ -215,7 +215,7 @@ impl App {
                                 } else {
                                     // Confirmed. Execute the tool.
                                     let tool_to_execute = tool_calls_queue.pop_front().unwrap();
-                                    let result_msg = self.tool_manager.execute_tool_call(&tool_to_execute, &self.config, self.file_state_manager.clone()).await;
+                                    let result_msg = self.tool_collection.execute_tool_call(&tool_to_execute, &self.config, self.file_state_manager.clone()).await;
                                     completed_messages.push(result_msg);
                                     // The state has been mutated (queue popped, results added),
                                     // so we just continue the main loop to process the next item.
@@ -298,7 +298,7 @@ impl App {
 
                     // Print enabled tools and model after user message
                     let tool_names: Vec<String> = self
-                        .tool_manager
+                        .tool_collection
                         .get_all_schemas()
                         .iter()
                         .map(|api_tool| match api_tool {
@@ -327,7 +327,7 @@ impl App {
     }
 
     fn spawn_llm_call(&self) -> AppState {
-        let tools = self.tool_manager.get_all_schemas();
+        let tools = self.tool_collection.get_all_schemas();
 
         let request = ChatCompletionRequest {
             model: self.config.model.clone(),

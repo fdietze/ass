@@ -5,7 +5,7 @@ use openrouter_api::{OpenRouterClient, types::chat::Message};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::tool_manager::ToolManager;
+use crate::tool_collection::ToolCollection;
 
 mod backend;
 mod cli;
@@ -19,7 +19,7 @@ mod path_expander;
 mod permissions;
 mod prompt_builder;
 mod streaming_executor;
-mod tool_manager;
+mod tool_collection;
 mod tools;
 mod ui;
 
@@ -45,15 +45,15 @@ async fn main() -> Result<()> {
     // Always print backend
     println!("Backend: {:?}", config.backend);
 
-    let mut tool_manager = ToolManager::new();
+    let mut tool_collection = ToolCollection::new();
     // Register tools
-    tool_manager.register(Box::new(tools::FileCreatorTool));
-    tool_manager.register(Box::new(tools::FileEditorTool));
-    tool_manager.register(Box::new(tools::FileReaderTool));
-    tool_manager.register(Box::new(tools::ListFilesTool));
-    tool_manager.register(Box::new(tools::ShellTool));
+    tool_collection.register(Box::new(tools::FileCreatorTool));
+    tool_collection.register(Box::new(tools::FileEditorTool));
+    tool_collection.register(Box::new(tools::FileReaderTool));
+    tool_collection.register(Box::new(tools::ListFilesTool));
+    tool_collection.register(Box::new(tools::ShellTool));
     // Collect tool names
-    let schemas = tool_manager.get_all_schemas();
+    let schemas = tool_collection.get_all_schemas();
     let tool_names: Vec<String> = schemas
         .iter()
         .map(|api_tool| match api_tool {
@@ -65,9 +65,9 @@ async fn main() -> Result<()> {
         println!("tools: {}", tool_names.join(", "));
         println!("model: {}", config.model);
     }
-    let tool_manager = Arc::new(tool_manager);
+    let tool_collection = Arc::new(tool_collection);
 
-    let mut app = ui::App::new(config.clone(), client, tool_manager);
+    let mut app = ui::App::new(config.clone(), client, tool_collection);
 
     // Only process system prompt if one is configured
     if let Some(system_prompt) = &app.config.system_prompt {

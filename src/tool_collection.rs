@@ -1,6 +1,6 @@
-//! # Tool Manager
+//! # Tool Collection
 //!
-//! The `ToolManager` is the central hub for discovering, previewing, and executing tools.
+//! The `ToolCollection` is the central hub for discovering, previewing, and executing tools.
 //! It maintains a registry of all available tools and dispatches calls to the appropriate
 //! implementation based on the tool name.
 
@@ -18,20 +18,20 @@ use std::{
 };
 use strip_ansi_escapes::strip_str;
 
-/// A manager responsible for registering and dispatching tool calls.
-pub struct ToolManager {
+/// A collection responsible for registering and dispatching tool calls.
+pub struct ToolCollection {
     tools: HashMap<String, Box<dyn Tool>>,
 }
 
-impl ToolManager {
-    /// Creates a new, empty `ToolManager`.
+impl ToolCollection {
+    /// Creates a new, empty `ToolCollection`.
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
         }
     }
 
-    /// Registers a new tool with the manager.
+    /// Registers a new tool with the collection.
     pub fn register(&mut self, tool: Box<dyn Tool>) {
         self.tools.insert(tool.name().to_string(), tool);
     }
@@ -145,7 +145,7 @@ impl ToolManager {
     }
 }
 
-impl Default for ToolManager {
+impl Default for ToolCollection {
     fn default() -> Self {
         Self::new()
     }
