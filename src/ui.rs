@@ -284,32 +284,40 @@ impl App {
                     unreachable!();
                 }
                 AppState::ProcessingPrompt(prompt) => {
-                    display_user_message(prompt, &self.config, &self.file_state_manager).await?;
+                    let prompt_data = {
+                        let mut fsm = self.file_state_manager.lock().unwrap();
+                        prompt_builder::process_prompt(prompt, &self.config, &mut fsm)?
+                    };
+
+                    display_user_message(
+                        prompt,
+                        &prompt_data.file_summaries,
+                        &prompt_data.warnings,
+                    )
+                    .await?;
+
                     // Print enabled tools and model after user message
-                    let tool_names: Vec<String> = self.tool_manager.get_all_schemas()
+                    let tool_names: Vec<String> = self
+                        .tool_manager
+                        .get_all_schemas()
                         .iter()
-                        .filter_map(|api_tool| match api_tool {
-                            openrouter_api::models::tool::Tool::Function { function } => Some(function.name.clone()),
+                        .map(|api_tool| match api_tool {
+                            openrouter_api::models::tool::Tool::Function { function } => {
+                                function.name.clone()
+                            }
                         })
                         .collect();
                     println!("tools: {}", tool_names.join(", "));
                     println!("model: {}", self.config.model);
 
-
-                    let final_prompt = {
-                        let mut fsm = self.file_state_manager.lock().unwrap();
-                        prompt_builder::expand_file_mentions(prompt, &self.config, &mut fsm)?
-                    };
-
                     let user_message = Message {
                         role: "user".to_string(),
-                        content: final_prompt,
+                        content: prompt_data.final_prompt,
                         name: None,
                         tool_calls: None,
                         tool_call_id: None,
                     };
                     self.messages.push(user_message);
-
                     let new_state = self.spawn_llm_call();
                     self.state = new_state;
                 }
@@ -320,7 +328,6 @@ impl App {
 
     fn spawn_llm_call(&self) -> AppState {
         let tools = self.tool_manager.get_all_schemas();
-
 
         let request = ChatCompletionRequest {
             model: self.config.model.clone(),
@@ -356,46 +363,21 @@ impl App {
 
 async fn display_user_message(
     prompt: &str,
-    config: &Config,
-    file_state_manager: &Arc<Mutex<FileStateManager>>,
+    summaries: &[String],
+    warnings: &[String],
 ) -> Result<()> {
     println!("[{}]", style("user").blue());
     println!("{}", style(prompt).cyan()); // Print the original prompt as is.
-
-    let enrichments = crate::enricher::extract_enrichments(prompt);
-    if enrichments.mentioned_files.is_empty() {
-        return Ok(());
-    }
-
-    let expansion_result = crate::path_expander::expand_and_validate(
-        &enrichments.mentioned_files,
-        &config.ignored_paths,
-    );
-
-    let summaries: Vec<String> = expansion_result
-        .files
-        .iter()
-        .filter_map(|file_path| {
-            let mut fsm = file_state_manager.lock().unwrap();
-            match fsm.open_file(file_path) {
-                Ok(file_state) => {
-                    let total_lines = file_state.lines.len();
-                    let filename = std::path::Path::new(file_path)
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy();
-                    Some(format!("[{filename} ({total_lines} lines)]"))
-                }
-                Err(_) => None, // Don't include files that failed to open in the summary
-            }
-        })
-        .collect();
 
     if !summaries.is_empty() {
         println!("{}", style("Attached files:").dim());
         for summary in summaries {
             println!("{}", style(summary).dim());
         }
+    }
+
+    for warning in warnings {
+        eprintln!("{}", style(warning).yellow());
     }
 
     Ok(())

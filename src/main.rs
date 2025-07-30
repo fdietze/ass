@@ -56,9 +56,10 @@ async fn main() -> Result<()> {
     tool_manager.register(Box::new(tools::ShellTool));
     // Collect tool names
     let schemas = tool_manager.get_all_schemas();
-    let tool_names: Vec<String> = schemas.iter()
-        .filter_map(|api_tool| match api_tool {
-            openrouter_api::models::tool::Tool::Function { function } => Some(function.name.clone()),
+    let tool_names: Vec<String> = schemas
+        .iter()
+        .map(|api_tool| match api_tool {
+            openrouter_api::models::tool::Tool::Function { function } => function.name.clone(),
         })
         .collect();
     // If no initial user message, print tools and model
@@ -72,54 +73,30 @@ async fn main() -> Result<()> {
 
     // Only process system prompt if one is configured
     if let Some(system_prompt) = &app.config.system_prompt {
-        let system_prompt_content = {
+        let prompt_data = {
             let mut fsm = app.file_state_manager.lock().unwrap();
-            prompt_builder::expand_file_mentions(system_prompt, &app.config, &mut fsm)?
+            prompt_builder::process_prompt(system_prompt, &app.config, &mut fsm)?
         };
 
         if app.config.show_system_prompt {
             println!("[{}]", style("system").blue());
             println!("{system_prompt}"); // Print the original, un-expanded prompt
 
-            // Display collapsed summary for files mentioned in the system prompt
-            let enrichments = enricher::extract_enrichments(system_prompt);
-            if !enrichments.mentioned_files.is_empty() {
-                let expansion_result = path_expander::expand_and_validate(
-                    &enrichments.mentioned_files,
-                    &app.config.ignored_paths,
-                );
-
-                let summaries: Vec<String> = expansion_result
-                    .files
-                    .iter()
-                    .filter_map(|file_path| {
-                        let mut fsm = app.file_state_manager.lock().unwrap();
-                        match fsm.open_file(file_path) {
-                            Ok(file_state) => {
-                                let total_lines = file_state.lines.len();
-                                let filename = std::path::Path::new(file_path)
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy();
-                                Some(format!("[{filename} ({total_lines} lines)]"))
-                            }
-                            Err(_) => None,
-                        }
-                    })
-                    .collect();
-
-                if !summaries.is_empty() {
-                    println!("{}", style("Attached files:").dim());
-                    for summary in summaries {
-                        println!("{}", style(summary).dim());
-                    }
+            if !prompt_data.file_summaries.is_empty() {
+                println!("{}", style("Attached files:").dim());
+                for summary in prompt_data.file_summaries {
+                    println!("{}", style(summary).dim());
                 }
+            }
+
+            for warning in prompt_data.warnings {
+                eprintln!("{}", style(warning).yellow());
             }
         }
 
         let system_message = Message {
             role: "system".to_string(),
-            content: system_prompt_content,
+            content: prompt_data.final_prompt,
             name: None,
             tool_calls: None,
             tool_call_id: None,

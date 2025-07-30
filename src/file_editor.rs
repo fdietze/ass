@@ -109,12 +109,12 @@ pub struct FileEditorTool;
 #[async_trait]
 impl Tool for FileEditorTool {
     fn name(&self) -> &'static str {
-        "edit_file"
+        "edit_files"
     }
 
     fn schema(&self) -> FunctionDescription {
         FunctionDescription {
-            name: "edit_file".to_string(),
+            name: "edit_files".to_string(),
             description: Some(
                 r#"Atomically performs file edits using a robust, inclusive anchor system for move and replace operations.
 
