@@ -144,7 +144,8 @@ impl Tool for FileEditorTool {
                             "properties": {
                                 "source_file_path": { "type": "string", "description": "Path of the file to move lines from." },
                                 "source_range_start_anchor": {
-                                    "type": ["object", "null"],
+                                     "type": "object",
+                                     "nullable": true,
                                     "title": "Source Range Start Anchor (Inclusive)",
                                     "description": "An anchor for the FIRST line in the source range. This line WILL be part of the moved content.",
                                     "properties": {
@@ -155,7 +156,8 @@ impl Tool for FileEditorTool {
                                     "required": ["lid", "line_content"]
                                 },
                                 "source_range_end_anchor": {
-                                    "type": ["object", "null"],
+                                     "type": "object",
+                                     "nullable": true,
                                     "title": "Source Range End Anchor (Inclusive)",
                                     "description": "An anchor for the LAST line in the source range. This line WILL be part of the moved content.",
                                     "properties": {
@@ -168,7 +170,8 @@ impl Tool for FileEditorTool {
                                 "dest_file_path": { "type": "string", "description": "Path of the file to move lines to." },
                                 "dest_at_position": { "enum": ["start_of_file", "end_of_file", "after_anchor", "before_anchor"], "description": "Specifies where to insert the content in the destination file." },
                                 "dest_context_anchor": {
-                                    "type": ["object", "null"],
+                                     "type": "object",
+                                     "nullable": true,
                                     "title": "Destination Context Anchor",
                                     "description": "An anchor to uniquely identify the destination line. Required only when 'dest_at_position' is 'after_anchor' or 'before_anchor'.",
                                     "properties": {
@@ -192,7 +195,8 @@ impl Tool for FileEditorTool {
                             "properties": {
                                 "file_path": { "type": "string", "description": "The relative path to the file to be modified." },
                                 "anchor_range_begin": {
-                                    "type": ["object", "null"],
+                                     "type": "object",
+                                     "nullable": true,
                                     "title": "Range Begin Anchor (Inclusive)",
                                     "description": "An anchor for the FIRST line in the range to replace. This line WILL be replaced. If null, the range starts at the beginning of the file.",
                                     "properties": {
@@ -204,7 +208,8 @@ impl Tool for FileEditorTool {
                                 },
                                 "new_content": { "type": "array", "items": { "type": "string" }, "description": "The new lines to replace the old range with. Use an empty array to delete." },
                                 "anchor_range_end": {
-                                    "type": ["object", "null"],
+                                     "type": "object",
+                                     "nullable": true,
                                     "title": "Range End Anchor (Inclusive)",
                                     "description": "An anchor for the LAST line in the range to replace. This line WILL be replaced. If null, the range extends to the end of the file.",
                                     "properties": {
@@ -229,7 +234,8 @@ impl Tool for FileEditorTool {
                                 "file_path": { "type": "string", "description": "The relative path to the file to be modified." },
                                 "at_position": { "enum": ["start_of_file", "end_of_file", "after_anchor", "before_anchor"], "description": "Specifies where to insert the content." },
                                 "context_anchor": {
-                                    "type": ["object", "null"],
+                                     "type": "object",
+                                     "nullable": true,
                                     "title": "Context Anchor",
                                     "description": "An anchor to uniquely identify the line to insert before or after. Required only when 'at_position' is 'after_anchor' or 'before_anchor'.",
                                     "properties": {

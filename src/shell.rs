@@ -52,7 +52,8 @@ The output and the exit code will be returned. Always do a short analysis of the
                         "description": "The shell command to execute."
                     },
                     "workdir": {
-                        "type": ["string", "null"],
+                        "type": "string",
+                        "nullable": true,
                         "description": "The working directory to run the command in. Defaults to the current working directory."
                     }
                 },
