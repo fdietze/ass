@@ -2,11 +2,11 @@
 
 use crate::{
     config::Config,
-    file_editor::{Anchor, FileEditorTool},
     file_state::FileState,
     file_state_manager::FileStateManager,
     tools::Tool,
 };
+use super::{Anchor, FileEditorTool};
 use std::{
     fs,
     path::PathBuf,

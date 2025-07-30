@@ -11,11 +11,16 @@ use openrouter_api::models::tool::FunctionDescription;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
 
-pub use crate::file_creator::FileCreatorTool;
-pub use crate::file_editor::FileEditorTool;
-pub use crate::file_reader::FileReaderTool;
-pub use crate::list_files::ListFilesTool;
-pub use crate::shell::ShellTool;
+pub mod create_files;
+pub mod edit_files;
+pub mod execute_shell_command;
+pub mod list_files;
+pub mod read_files;
+pub use self::create_files::FileCreatorTool;
+pub use self::edit_files::FileEditorTool;
+pub use self::execute_shell_command::ShellTool;
+pub use self::list_files::ListFilesTool;
+pub use self::read_files::FileReaderTool;
 
 /// A trait representing a self-contained, executable tool.
 ///

@@ -772,5 +772,5 @@ fn create_diff_preview(
 }
 
 #[cfg(test)]
-#[path = "file_editor_tests.rs"]
+#[path = "edit_files_tests.rs"]
 mod file_editor_tests;
