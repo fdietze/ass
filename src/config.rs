@@ -132,7 +132,7 @@ impl Config {
             self.backend = backend.clone();
             // Only update base_url if it wasn't explicitly provided in the same layer.
             if layer.base_url.is_none() {
-                self.base_url = self.backend.default_base_url().to_string();
+                self.base_url = self.backend.config().base_url.to_string();
             }
         }
 
@@ -211,7 +211,7 @@ impl Default for Config {
             debug_tool_calls: false,
             auto_execute: false,
             print_messages: false,
-            base_url: backend.default_base_url().to_string(),
+            base_url: backend.config().base_url.to_string(),
         }
     }
 }

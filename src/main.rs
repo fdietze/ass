@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::Parser;
 use console::style;
 use openrouter_api::{OpenRouterClient, types::chat::Message};
@@ -28,8 +28,11 @@ async fn main() -> Result<()> {
     let cli = cli::Cli::parse();
     let config = config::load(&cli.overrides)?;
 
-    let api_key = if let Some(env_var) = config.backend.api_key_env_var() {
-        std::env::var(env_var)?
+    let api_key = if let Some(env_var) = config.backend.config().api_key_env_var {
+        match std::env::var(env_var) {
+            Ok(val) => val,
+            Err(_) => bail!("environment variable {} not set", env_var),
+        }
     } else {
         // TODO: only call .with_api_key if let Some(config.backend.api_key_env_var())
         "sk-or-v1-0000000000000000000000000000000000000000000000000000000000000000".to_string()
