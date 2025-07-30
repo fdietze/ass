@@ -1,5 +1,6 @@
 - automatically run `just check` to check (for compiling, linting and running tests) in-between and after implementation steps. To automatically fix some linter errors (clippy), run `just fix` (will internally run cargo clippy --fix). After running `just fix`, re-read the affected files and run `just check` again to make sure all linter errors are fixed.
 - Modify Cargo.toml using cargo commands.
+- trust the compiler.
 
 
 # Rust
