@@ -2,3 +2,4 @@
 /target
 .envrc.local
 /target-rust-analyzer
+/result
