@@ -1,7 +1,7 @@
 use clap::Parser;
-use da::config::ConfigLayer;
+use alors::config::ConfigLayer;
 
-/// A command-line interface for the `da` agent.
+/// A command-line interface for the `alors` agent.
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Cli {

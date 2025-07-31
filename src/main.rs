@@ -4,7 +4,7 @@ use console::style;
 use openrouter_api::types::chat::Message;
 use std::sync::Arc;
 
-use da::{agent::Agent, tool_collection::ToolCollection};
+use alors::{agent::Agent, tool_collection::ToolCollection};
 
 mod cli;
 mod ui;
@@ -12,19 +12,19 @@ mod ui;
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = cli::Cli::parse();
-    let config = da::config::load(&cli.overrides)?;
+    let config = alors::config::load(&cli.overrides)?;
 
-    let client = da::client::initialize_client(&config)?;
+    let client = alors::client::initialize_client(&config)?;
     // Always print backend
     println!("Backend: {:?}", config.backend);
 
     let mut tool_collection = ToolCollection::new();
     // Register tools
-    tool_collection.register(Box::new(da::tools::FileCreatorTool));
-    tool_collection.register(Box::new(da::tools::FileEditorTool));
-    tool_collection.register(Box::new(da::tools::FileReaderTool));
-    tool_collection.register(Box::new(da::tools::ListFilesTool));
-    tool_collection.register(Box::new(da::tools::ShellTool));
+    tool_collection.register(Box::new(alors::tools::FileCreatorTool));
+    tool_collection.register(Box::new(alors::tools::FileEditorTool));
+    tool_collection.register(Box::new(alors::tools::FileReaderTool));
+    tool_collection.register(Box::new(alors::tools::ListFilesTool));
+    tool_collection.register(Box::new(alors::tools::ShellTool));
     // Collect tool names
     let schemas = tool_collection.get_all_schemas();
     let tool_names: Vec<String> = schemas
@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
     if let Some(system_prompt) = &agent.config.system_prompt {
         let prompt_data = {
             let mut fsm = agent.file_state_manager.lock().unwrap();
-            da::prompt_builder::process_prompt(system_prompt, &agent.config, &mut fsm)?
+            alors::prompt_builder::process_prompt(system_prompt, &agent.config, &mut fsm)?
         };
 
         if agent.config.show_system_prompt {

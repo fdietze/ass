@@ -1,4 +1,4 @@
-# da
+# alors
 
 OpenRouter:
 
@@ -12,7 +12,7 @@ Ollama:
 ```bash
 cargo run -- "create a new file hello.txt containing 'Hello world'" --backend ollama --model "qwen3:0.6b"
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.26s
-     Running `target/debug/da 'create a new file hello.txt containing '\''Hello world'\''' --backend ollama --model 'qwen3:0.6b'`
+     Running `target/debug/alors 'create a new file hello.txt containing '\''Hello world'\''' --backend ollama --model 'qwen3:0.6b'`
 Backend: Ollama
 Model: qwen3:0.6b
 [user]

@@ -227,7 +227,7 @@ impl Default for Config {
 /// newly available default settings, making them discoverable to the user.
 pub fn load(cli_layer: &ConfigLayer) -> Result<Config> {
     let xdg_dirs = xdg::BaseDirectories::new();
-    let config_path = xdg_dirs.place_config_file("da/config.toml")?;
+    let config_path = xdg_dirs.place_config_file("alors/config.toml")?;
 
     // Load file layer, or use a default if it doesn't exist or fails to parse.
     let file_layer: ConfigLayer = if config_path.exists() {
