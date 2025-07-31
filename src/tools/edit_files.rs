@@ -74,7 +74,7 @@ pub enum Position {
 #[serde(rename_all = "snake_case")]
 pub struct InsertRequest {
     pub file_path: String,
-    pub new_content: Vec<String>,
+    pub new_content: String,
     pub at_position: Position,
     pub context_anchor: Option<Anchor>,
 }
@@ -85,7 +85,7 @@ pub struct ReplaceRequest {
     pub file_path: String,
     pub anchor_range_begin: Option<Anchor>, // Renamed for inclusivity
     pub anchor_range_end: Option<Anchor>,   // Renamed for inclusivity
-    pub new_content: Vec<String>,
+    pub new_content: String,
 }
 
 #[derive(Deserialize, Debug, Serialize)]
@@ -206,7 +206,7 @@ impl Tool for FileEditorTool {
                                     "additionalProperties": false,
                                     "required": ["lid", "line_content"]
                                 },
-                                "new_content": { "type": "array", "items": { "type": "string" }, "description": "The new lines to replace the old range with. Use an empty array to delete." },
+                                 "new_content": { "type": "string", "description": "The new multi-line content to replace the old range with. Use an empty string to delete." },
                                 "anchor_range_end": {
                                      "type": "object",
                                      "nullable": true,
@@ -245,7 +245,7 @@ impl Tool for FileEditorTool {
                                     "additionalProperties": false,
                                     "required": ["lid", "line_content"]
                                 },
-                                "new_content": { "type": "array", "items": { "type": "string" }, "description": "The new lines of content to insert." }
+                                 "new_content": { "type": "string", "description": "The new multi-line content to insert." }
                             },
                             "additionalProperties": false,
                             "required": ["file_path", "at_position", "context_anchor", "new_content"]
@@ -584,8 +584,8 @@ pub fn plan_file_operations(
 
             let new_content_with_suffixes: Vec<(String, String)> = req
                 .new_content
-                .iter()
-                .map(|line| (line.clone(), crate::file_state::generate_random_suffix()))
+                .lines()
+                .map(|line| (line.to_string(), crate::file_state::generate_random_suffix()))
                 .collect();
 
             let internal_op = match (start_lid, end_lid) {
@@ -667,8 +667,8 @@ pub fn plan_file_operations(
 
             let new_content_with_suffixes: Vec<(String, String)> = req
                 .new_content
-                .iter()
-                .map(|line| (line.clone(), crate::file_state::generate_random_suffix()))
+                .lines()
+                .map(|line| (line.to_string(), crate::file_state::generate_random_suffix()))
                 .collect();
 
             let internal_op = PatchOperation::Insert(InsertOp {

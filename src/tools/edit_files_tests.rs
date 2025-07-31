@@ -61,7 +61,7 @@ async fn test_execute_replace_successfully() {
             "file_path": file_path_str,
             "anchor_range_begin": anchor1,
             "anchor_range_end": anchor2,
-            "new_content": ["new middle"]
+            "new_content": "new middle"
         }],
         "inserts": [],
         "moves": []
@@ -90,7 +90,7 @@ async fn test_execute_delete_successfully() {
             "file_path": file_path_str,
             "anchor_range_begin": anchor_before,
             "anchor_range_end": anchor_after,
-            "new_content": []
+            "new_content": ""
         }],
         "inserts": [],
         "moves": []
@@ -117,7 +117,7 @@ async fn test_execute_insert_before_anchor() {
             "file_path": file_path_str,
             "at_position": "before_anchor",
             "context_anchor": anchor,
-            "new_content": ["line 2"]
+            "new_content": "line 2"
         }],
         "moves": []
     });
@@ -186,7 +186,7 @@ async fn test_succeed_replace_with_no_anchors() {
             "file_path": file_path_str,
             "anchor_range_begin": null,
             "anchor_range_end": null,
-            "new_content": ["new content"]
+            "new_content": "new content"
         }],
         "inserts": [],
         "moves": []
@@ -215,7 +215,7 @@ async fn test_execute_fails_with_invalid_suffix() {
             "file_path": file_path_str,
             "anchor_range_begin": anchor,
             "anchor_range_end": null,
-            "new_content": ["..."]
+            "new_content": "..."
         }],
         "inserts": [],
         "moves": []
@@ -225,4 +225,109 @@ async fn test_execute_fails_with_invalid_suffix() {
     assert!(result.is_err());
     let error_string = result.unwrap_err().to_string();
     assert!(error_string.contains("Invalid FractionalIndex format in LID: '0'"));
+}
+
+#[tokio::test]
+async fn test_insert_multiline_string() {
+    let (_tmp_dir, file_path, fsm, config) = setup_fsm("line 1\nline 3");
+    let file_path_str = file_path.to_str().unwrap().to_string();
+    let tool = FileEditorTool;
+
+    fsm.lock().unwrap().open_file(&file_path_str).unwrap();
+    let state = fsm.lock().unwrap().open_files[&file_path_str].clone();
+    let anchor = get_anchor(&state, 0); // line 1
+
+    let args = serde_json::json!({
+        "replaces": [],
+        "inserts": [{
+            "file_path": file_path_str,
+            "at_position": "after_anchor",
+            "context_anchor": anchor,
+            "new_content": "line 1.5\nline 2"
+        }],
+        "moves": []
+    });
+
+    tool.execute(&args, &config, fsm).await.unwrap();
+    let final_content = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(final_content, "line 1\nline 1.5\nline 2\nline 3");
+}
+
+#[tokio::test]
+async fn test_replace_with_multiline_string() {
+    let (_tmp_dir, file_path, fsm, config) = setup_fsm("one\ntwo\nthree");
+    let file_path_str = file_path.to_str().unwrap().to_string();
+    let tool = FileEditorTool;
+
+    fsm.lock().unwrap().open_file(&file_path_str).unwrap();
+    let state = fsm.lock().unwrap().open_files[&file_path_str].clone();
+    let anchor = get_anchor(&state, 1); // line "two"
+
+    let args = serde_json::json!({
+        "replaces": [{
+            "file_path": file_path_str,
+            "anchor_range_begin": anchor.clone(),
+            "anchor_range_end": anchor,
+            "new_content": "TWO\nAND A HALF"
+        }],
+        "inserts": [],
+        "moves": []
+    });
+
+    tool.execute(&args, &config, fsm).await.unwrap();
+    let final_content = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(final_content, "one\nTWO\nAND A HALF\nthree");
+}
+
+#[tokio::test]
+async fn test_insert_with_trailing_newline() {
+    let (_tmp_dir, file_path, fsm, config) = setup_fsm("line 1\nline 3");
+    let file_path_str = file_path.to_str().unwrap().to_string();
+    let tool = FileEditorTool;
+
+    fsm.lock().unwrap().open_file(&file_path_str).unwrap();
+    let state = fsm.lock().unwrap().open_files[&file_path_str].clone();
+    let anchor = get_anchor(&state, 0); // line 1
+
+    let args = serde_json::json!({
+        "inserts": [{
+            "file_path": file_path_str,
+            "at_position": "after_anchor",
+            "context_anchor": anchor,
+            "new_content": "line 2\n"
+        }],
+        "replaces": [],
+        "moves": []
+    });
+
+    tool.execute(&args, &config, fsm).await.unwrap();
+    let final_content = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(final_content, "line 1\nline 2\nline 3");
+}
+
+#[tokio::test]
+async fn test_insert_empty_string_is_noop() {
+    let original_content = "line 1\nline 2";
+    let (_tmp_dir, file_path, fsm, config) = setup_fsm(original_content);
+    let file_path_str = file_path.to_str().unwrap().to_string();
+    let tool = FileEditorTool;
+
+    fsm.lock().unwrap().open_file(&file_path_str).unwrap();
+    let state = fsm.lock().unwrap().open_files[&file_path_str].clone();
+    let anchor = get_anchor(&state, 0);
+
+    let args = serde_json::json!({
+        "inserts": [{
+            "file_path": file_path_str,
+            "at_position": "after_anchor",
+            "context_anchor": anchor,
+            "new_content": ""
+        }],
+        "replaces": [],
+        "moves": []
+    });
+
+    tool.execute(&args, &config, fsm).await.unwrap();
+    let final_content = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(final_content, original_content);
 }

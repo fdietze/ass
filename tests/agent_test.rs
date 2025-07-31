@@ -32,7 +32,7 @@ async fn test_agent_uses_file_editor_tool() -> Result<()> {
             arguments: json!({
                 "inserts": [{
                     "file_path": "test_file.txt",
-                    "new_content": ["This is new content.\n"],
+                    "new_content": "This is new content.\n",
                     "at_position": "end_of_file",
                     "context_anchor": null,
                 }],
