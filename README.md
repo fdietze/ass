@@ -1,5 +1,12 @@
 # alors
 
+## Goals
+
+- be very close to how AI apis work. No unnecessary abstractions. Everything can be fully adjusted, like system prompts.
+- No TUI, use the scrollback of the terminal to see what happened.
+- the agent can be used via CLI, but also as a library to build higher-level workflows on top.
+- Very robust file editing tools that allow LLMs to edit large files with precise changes over many steps without re-reading the file.
+
 OpenRouter:
 
 ```bash
