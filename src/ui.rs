@@ -1,9 +1,9 @@
-use anyhow::Result;
-use console::style;
 use alors::{
     agent::{Agent, AgentOutput},
     tool_collection::ToolCollection,
 };
+use anyhow::Result;
+use console::style;
 use openrouter_api::{models::tool::ToolCall, types::chat::Message};
 use std::{
     io::{self, Write},

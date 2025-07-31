@@ -149,7 +149,7 @@ impl Tool for FileEditorTool {
                                     "title": "Source Range Start Anchor (Inclusive)",
                                     "description": "An anchor for the FIRST line in the source range. This line WILL be part of the moved content.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line." },
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Example: 'lid-a0_1b2c'", "pattern": "^lid-[a-zA-Z0-9]+_[a-z0-9]{4}$" },
                                         "line_content": { "type": "string", "description": "The exact, single-line content of the anchor line." }
                                     },
                                     "additionalProperties": false,
@@ -161,7 +161,7 @@ impl Tool for FileEditorTool {
                                     "title": "Source Range End Anchor (Inclusive)",
                                     "description": "An anchor for the LAST line in the source range. This line WILL be part of the moved content.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line." },
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Example: 'lid-a0_1b2c'", "pattern": "^lid-[a-zA-Z0-9]+_[a-z0-9]{4}$" },
                                         "line_content": { "type": "string", "description": "The exact, single-line content of the anchor line." }
                                     },
                                     "additionalProperties": false,
@@ -175,7 +175,7 @@ impl Tool for FileEditorTool {
                                     "title": "Destination Context Anchor",
                                     "description": "An anchor to uniquely identify the destination line. Required only when 'dest_at_position' is 'after_anchor' or 'before_anchor'.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Example: 'lid-a0_1b2c'", "pattern": "^lid-[a-zA-Z0-9]+_[a-z0-9]{4}$" },
                                         "line_content": { "type": "string", "description": "The exact, single-line content of the anchor line.", "pattern": "^[^\r\n]*$" }
                                     },
                                     "additionalProperties": false,
@@ -200,7 +200,7 @@ impl Tool for FileEditorTool {
                                     "title": "Range Begin Anchor (Inclusive)",
                                     "description": "An anchor for the FIRST line in the range to replace. This line WILL be replaced. If null, the range starts at the beginning of the file.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line." },
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Example: 'lid-a0_1b2c'", "pattern": "^lid-[a-zA-Z0-9]+_[a-z0-9]{4}$" },
                                         "line_content": { "type": "string", "description": "The exact, single-line content of the anchor line." }
                                     },
                                     "additionalProperties": false,
@@ -213,7 +213,7 @@ impl Tool for FileEditorTool {
                                     "title": "Range End Anchor (Inclusive)",
                                     "description": "An anchor for the LAST line in the range to replace. This line WILL be replaced. If null, the range extends to the end of the file.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line." },
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Example: 'lid-a0_1b2c'", "pattern": "^lid-[a-zA-Z0-9]+_[a-z0-9]{4}$" },
                                         "line_content": { "type": "string", "description": "The exact, single-line content of the anchor line." }
                                     },
                                     "additionalProperties": false,
@@ -239,7 +239,7 @@ impl Tool for FileEditorTool {
                                     "title": "Context Anchor",
                                     "description": "An anchor to uniquely identify the line to insert before or after. Required only when 'at_position' is 'after_anchor' or 'before_anchor'.",
                                     "properties": {
-                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Must be prefixed with 'lid-'. Example: 'lid-a1b2'." },
+                                        "lid": { "type": "string", "description": "The unique identifier (LID) of the anchor line. Example: 'lid-a0_1b2c'", "pattern": "^lid-[a-zA-Z0-9]+_[a-z0-9]{4}$" },
                                         "line_content": { "type": "string", "description": "The exact, single-line content of the anchor line.", "pattern": "^[^\r\n]*$" }
                                     },
                                     "additionalProperties": false,
@@ -585,7 +585,12 @@ pub fn plan_file_operations(
             let new_content_with_suffixes: Vec<(String, String)> = req
                 .new_content
                 .lines()
-                .map(|line| (line.to_string(), crate::file_state::generate_random_suffix()))
+                .map(|line| {
+                    (
+                        line.to_string(),
+                        crate::file_state::generate_random_suffix(),
+                    )
+                })
                 .collect();
 
             let internal_op = match (start_lid, end_lid) {
@@ -668,7 +673,12 @@ pub fn plan_file_operations(
             let new_content_with_suffixes: Vec<(String, String)> = req
                 .new_content
                 .lines()
-                .map(|line| (line.to_string(), crate::file_state::generate_random_suffix()))
+                .map(|line| {
+                    (
+                        line.to_string(),
+                        crate::file_state::generate_random_suffix(),
+                    )
+                })
                 .collect();
 
             let internal_op = PatchOperation::Insert(InsertOp {

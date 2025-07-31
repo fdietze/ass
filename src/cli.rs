@@ -1,5 +1,5 @@
-use clap::Parser;
 use alors::config::ConfigLayer;
+use clap::Parser;
 
 /// A command-line interface for the `alors` agent.
 #[derive(Parser, Debug)]
