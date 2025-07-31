@@ -12,6 +12,11 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+enum ToolInteraction {
+    ToolsExecuted,
+    Cancelled,
+}
+
 pub struct App {
     agent: Agent,
     stdin_receiver: mpsc::Receiver<Option<String>>,
@@ -92,16 +97,27 @@ impl App {
                             }
                             AgentOutput::ToolCalls(calls) => {
                                 let tool_collection = Arc::clone(&self.agent.tool_collection);
-                                self.process_tool_calls_interactively(
-                                    calls,
-                                    tool_collection,
-                                    &mut ctrl_c_pressed,
-                                )
-                                .await?;
-                                // After processing, the agent will run again to process results.
+                                let interaction = self
+                                    .process_tool_calls_interactively(
+                                        calls,
+                                        tool_collection,
+                                        &mut ctrl_c_pressed,
+                                    )
+                                    .await?;
+                                match interaction {
+                                    ToolInteraction::ToolsExecuted => {
+                                        // After executing tools, we want to run the agent again
+                                        // to process the tool results, so we set an empty prompt.
+                                    }
+                                    ToolInteraction::Cancelled => {
+                                        // User cancelled, so break the agent's turn.
+                                        break;
+                                    }
+                                }
                             }
                             AgentOutput::Done => {
                                 // Agent's turn is over.
+                                break;
                             }
                             AgentOutput::PendingLLM(_) => unreachable!(), // Already handled
                         },
@@ -154,7 +170,7 @@ impl App {
         tool_calls: Vec<ToolCall>,
         tool_collection: Arc<ToolCollection>,
         ctrl_c_pressed: &mut bool,
-    ) -> Result<bool> {
+    ) -> Result<ToolInteraction> {
         let mut any_tool_run = false;
 
         for (index, tool_call) in tool_calls.iter().enumerate() {
@@ -217,13 +233,13 @@ impl App {
                                     tool_calls: None,
                                 });
                             }
-                            return Ok(true);
+                            return Ok(ToolInteraction::Cancelled);
                         }
-                            }
-                            line_opt = self.stdin_receiver.recv() => {
-                                let input = line_opt.flatten().unwrap_or_default();
-                                if input.eq_ignore_ascii_case("n") {
-                                    println!("{}", style("Operation cancelled. Returning to input.").yellow());
+                    }
+                    line_opt = self.stdin_receiver.recv() => {
+                        let input = line_opt.flatten().unwrap_or_default();
+                        if input.eq_ignore_ascii_case("n") {
+                            println!("{}", style("Operation cancelled. Returning to input.").yellow());
                             // User cancelled. Generate messages for this and all subsequent tools.
                             for remaining_tool_call in &tool_calls[index..] {
                                 self.agent.messages.push(Message {
@@ -234,8 +250,8 @@ impl App {
                                     tool_calls: None,
                                 });
                             }
-                            return Ok(true); // We generated responses, so the agent needs to run.
-                            } else {
+                            return Ok(ToolInteraction::Cancelled); // We generated responses, so the agent needs to run.
+                        } else {
                             *ctrl_c_pressed = false; // Reset on confirmation
                             true
                         }
@@ -245,18 +261,45 @@ impl App {
 
             // --- Execution ---
             if confirmed {
-                let result_msg = tool_collection
-                    .execute_tool_call(
-                        tool_call,
-                        &self.agent.config,
-                        self.agent.file_state_manager.clone(),
-                    )
-                    .await;
+                let tool_future = tool_collection.execute_tool_call(
+                    tool_call,
+                    &self.agent.config,
+                    self.agent.file_state_manager.clone(),
+                );
+
+                let result_msg = tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {
+                        if *ctrl_c_pressed {
+                            println!("\nShutting down...");
+                            process::exit(0);
+                        } else {
+                            println!("\nTool execution cancelled. Press Ctrl+C again to exit.");
+                            *ctrl_c_pressed = true;
+                            // Abort and generate cancellation messages for remaining tools
+                            for remaining_tool_call in &tool_calls[index..] {
+                                self.agent.messages.push(Message {
+                                    role: "tool".to_string(),
+                                    content: "Tool execution cancelled by user.".to_string(),
+                                    name: Some(remaining_tool_call.function_call.name.clone()),
+                                    tool_call_id: Some(remaining_tool_call.id.clone()),
+                                    tool_calls: None,
+                                });
+                            }
+                            return Ok(ToolInteraction::Cancelled);
+                        }
+                    }
+                    result = tool_future => result,
+                };
+
                 self.agent.messages.push(result_msg);
                 any_tool_run = true;
             }
         }
-        Ok(any_tool_run)
+        Ok(if any_tool_run {
+            ToolInteraction::ToolsExecuted
+        } else {
+            ToolInteraction::Cancelled
+        })
     }
 }
 
