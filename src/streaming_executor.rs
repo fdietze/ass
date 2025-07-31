@@ -9,6 +9,22 @@ use openrouter_api::{models::tool::ToolCallChunk, types::chat::*};
 use std::collections::HashMap;
 use std::io::{Write, stdout};
 
+pub async fn collect_response_non_streaming(
+    client: &OpenRouterClient<Ready>,
+    mut request: ChatCompletionRequest,
+) -> Result<Option<Message>> {
+    request.stream = Some(false);
+
+    let response = client.chat()?.chat_completion(request).await?;
+
+    if let Some(choice) = response.choices.first() {
+        Ok(Some(choice.message.clone()))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Streams a chat completion request to the console and collects the full response.
 pub async fn stream_and_collect_response(
     client: &OpenRouterClient<Ready>,
     mut request: ChatCompletionRequest,

@@ -47,26 +47,44 @@ impl App {
             while !current_prompt.is_empty()
                 || self.agent.messages.last().is_some_and(|m| m.role == "tool")
             {
-                let agent_step = self.agent.step(current_prompt);
+                let agent_output = self.agent.step_streaming(current_prompt)?;
                 current_prompt = String::new(); // Consume the prompt
 
-                let agent_output = tokio::select! {
-                    biased;
-                    _ = tokio::signal::ctrl_c() => {
-                        if ctrl_c_pressed {
-                             println!("\nShutting down...");
-                            process::exit(0);
-                        } else {
-                            println!("\nLLM generation cancelled. Press Ctrl+C again to exit.");
-                            ctrl_c_pressed = true;
-                            // Break the inner loop to get to the user prompt.
-                            None
+                let final_agent_output = if let AgentOutput::PendingLLM(mut handle) = agent_output {
+                    tokio::select! {
+                        biased;
+                        _ = tokio::signal::ctrl_c() => {
+                            if ctrl_c_pressed {
+                                println!("\nShutting down...");
+                                process::exit(0);
+                            } else {
+                                println!("\nLLM generation cancelled. Press Ctrl+C again to exit.");
+                                ctrl_c_pressed = true;
+                                handle.abort(); // CRITICAL: Abort the detached task
+                                None
+                            }
+                        }
+                        result = &mut handle => {
+                            match result {
+                                Ok(Ok(Some(msg))) => {
+                                    self.agent.messages.push(msg.clone());
+                                    Some(Ok(if let Some(calls) = msg.tool_calls {
+                                        AgentOutput::ToolCalls(calls)
+                                    } else {
+                                        AgentOutput::Message(msg)
+                                    }))
+                                },
+                                Ok(Ok(None)) => Some(Ok(AgentOutput::Done)),
+                                Ok(Err(e)) => Some(Err(e)),
+                                Err(e) => Some(Err(e.into())),
+                            }
                         }
                     }
-                    output = agent_step => Some(output),
+                } else {
+                    Some(Ok(agent_output))
                 };
 
-                if let Some(result) = agent_output {
+                if let Some(result) = final_agent_output {
                     match result {
                         Ok(output) => match output {
                             AgentOutput::Message(_msg) => {
@@ -85,6 +103,7 @@ impl App {
                             AgentOutput::Done => {
                                 // Agent's turn is over.
                             }
+                            AgentOutput::PendingLLM(_) => unreachable!(), // Already handled
                         },
                         Err(e) => {
                             eprintln!("{}", style(format!("[Error] Agent failed: {e}")).red());
@@ -103,24 +122,24 @@ impl App {
             io::stdout().flush()?;
 
             tokio::select! {
-                biased;
-                _ = tokio::signal::ctrl_c() => {
-                    if ctrl_c_pressed {
+                        biased;
+                        _ = tokio::signal::ctrl_c() => {
+                            if ctrl_c_pressed {
                         println!("\nShutting down...");
                         process::exit(0);
-                    } else {
-                        println!("\nPress Ctrl+C again to exit.");
-                        ctrl_c_pressed = true;
-                    }
-                }
-                line_opt = self.stdin_receiver.recv() => {
-                    match line_opt.flatten() {
-                        Some(input) => {
-                            current_prompt = input;
-                            ctrl_c_pressed = false;
+                            } else {
+                                println!("\nPress Ctrl+C again to exit.");
+                                ctrl_c_pressed = true;
+                            }
                         }
-                        None => {
-                            // Ctrl+D was pressed
+                        line_opt = self.stdin_receiver.recv() => {
+                    match line_opt.flatten() {
+                                Some(input) => {
+                            current_prompt = input;
+                                    ctrl_c_pressed = false;
+                                }
+                                None => {
+                                    // Ctrl+D was pressed
                             println!("\nShutting down...");
                             process::exit(0);
                         }
@@ -181,7 +200,7 @@ impl App {
                 print!("\x07{} ", style("Execute this tool? [Y/n] ").dim());
                 io::stdout().flush()?;
                 tokio::select! {
-                    _ = tokio::signal::ctrl_c() => {
+                            _ = tokio::signal::ctrl_c() => {
                         if *ctrl_c_pressed {
                             println!("\nShutting down...");
                             process::exit(0);
@@ -200,11 +219,11 @@ impl App {
                             }
                             return Ok(true);
                         }
-                    }
-                    line_opt = self.stdin_receiver.recv() => {
-                        let input = line_opt.flatten().unwrap_or_default();
-                        if input.eq_ignore_ascii_case("n") {
-                            println!("{}", style("Operation cancelled. Returning to input.").yellow());
+                            }
+                            line_opt = self.stdin_receiver.recv() => {
+                                let input = line_opt.flatten().unwrap_or_default();
+                                if input.eq_ignore_ascii_case("n") {
+                                    println!("{}", style("Operation cancelled. Returning to input.").yellow());
                             // User cancelled. Generate messages for this and all subsequent tools.
                             for remaining_tool_call in &tool_calls[index..] {
                                 self.agent.messages.push(Message {
@@ -216,7 +235,7 @@ impl App {
                                 });
                             }
                             return Ok(true); // We generated responses, so the agent needs to run.
-                        } else {
+                            } else {
                             *ctrl_c_pressed = false; // Reset on confirmation
                             true
                         }

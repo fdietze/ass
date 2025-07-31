@@ -8,6 +8,7 @@ use openrouter_api::models::tool::ToolCall;
 use openrouter_api::types::chat::{ChatCompletionRequest, Message};
 use openrouter_api::{OpenRouterClient, Ready};
 use std::sync::{Arc, Mutex};
+use tokio::task::JoinHandle;
 
 #[derive(Debug)]
 pub struct PromptData {
@@ -18,6 +19,8 @@ pub struct PromptData {
 
 #[derive(Debug)]
 pub enum AgentOutput {
+    /// The agent has spawned an LLM task that needs to be awaited.
+    PendingLLM(JoinHandle<Result<Option<Message>>>),
     /// The agent has produced a text response for the user.
     Message(Message),
     /// The agent wants to execute one or more tools and requires
@@ -63,75 +66,41 @@ impl Agent {
         })
     }
 
-    /// Takes a user prompt, runs the LLM, and returns the agent's output.
-    /// This method does not execute tools, but returns them for the caller
-    /// to handle.
-    pub async fn step(&mut self, prompt: String) -> Result<AgentOutput> {
-        if !prompt.is_empty() {
-            let user_message = Message {
-                role: "user".to_string(),
-                content: prompt,
-                name: None,
-                tool_calls: None,
-                tool_call_id: None,
-            };
-            self.messages.push(user_message);
+    /// Takes a user prompt, runs the LLM, and returns a handle to the streaming task.
+    pub fn step_streaming(&mut self, prompt: String) -> Result<AgentOutput> {
+        let request = self.prepare_request(prompt)?;
+
+        if let Some(request) = request {
+            let client = self.client.as_ref().unwrap().clone();
+            let handle = tokio::spawn(async move {
+                streaming_executor::stream_and_collect_response(&client, request).await
+            });
+            Ok(AgentOutput::PendingLLM(handle))
+        } else {
+            Ok(AgentOutput::Done)
         }
+    }
 
-        // If there are no messages, there's nothing to do.
-        if self.messages.is_empty() {
-            return Ok(AgentOutput::Done);
-        }
+    /// Takes a user prompt, runs the LLM, and returns the final `AgentOutput`.
+    pub async fn step_non_streaming(&mut self, prompt: String) -> Result<AgentOutput> {
+        let request = self.prepare_request(prompt)?;
 
-        let client = match &self.client {
-            Some(client) => Arc::clone(client),
-            None => return Ok(AgentOutput::Done),
-        };
-
-        let tools = self.tool_collection.get_all_schemas();
-        let request = ChatCompletionRequest {
-            model: self.config.model.clone(),
-            messages: self.messages.clone(),
-            tools: Some(tools),
-            stream: Some(true),
-            response_format: None,
-            provider: None,
-            models: None,
-            transforms: None,
-        };
-
-        // Print messages before sending to API if configured
-        if self.config.print_messages {
-            println!();
-            println!(
-                "{}",
-                console::style("Messages being sent to API:")
-                    .yellow()
-                    .bold()
-            );
-            for message in &self.messages {
-                let message_json = serde_json::to_string_pretty(message)
-                    .unwrap_or_else(|e| format!("Failed to serialize message: {e}"));
-                println!("{message_json}");
-            }
-            println!();
-        }
-
-        let response_message = tokio::spawn(async move {
-            streaming_executor::stream_and_collect_response(&client, request).await
-        })
-        .await??;
-
-        match response_message {
-            Some(response) => {
-                self.messages.push(response.clone());
-                if let Some(tool_calls) = response.tool_calls {
+        if let Some(request) = request {
+            let client = self.client.as_ref().unwrap().clone();
+            let response =
+                streaming_executor::collect_response_non_streaming(&client, request).await?;
+            if let Some(message) = response {
+                self.messages.push(message.clone());
+                if let Some(tool_calls) = message.tool_calls {
                     Ok(AgentOutput::ToolCalls(tool_calls))
                 } else {
-                    Ok(AgentOutput::Message(response))
+                    Ok(AgentOutput::Message(message))
                 }
+            } else {
+                Ok(AgentOutput::Done)
             }
-            None => Ok(AgentOutput::Done),
+        } else {
+            Ok(AgentOutput::Done)
         }
     }
 
@@ -148,5 +117,54 @@ impl Agent {
             result_messages.push(result_msg);
         }
         Ok(result_messages)
+    }
+
+    // --- Private Helper Functions ---
+
+    fn prepare_request(&mut self, prompt: String) -> Result<Option<ChatCompletionRequest>> {
+        if !prompt.is_empty() {
+            let user_message = Message {
+                role: "user".to_string(),
+                content: prompt,
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            };
+            self.messages.push(user_message);
+        }
+
+        if self.messages.is_empty() {
+            return Ok(None);
+        }
+
+        let tools = self.tool_collection.get_all_schemas();
+        let request = ChatCompletionRequest {
+            model: self.config.model.clone(),
+            messages: self.messages.clone(),
+            tools: Some(tools),
+            stream: Some(true), // This will be overridden in the non-streaming case
+            response_format: None,
+            provider: None,
+            models: None,
+            transforms: None,
+        };
+
+        if self.config.print_messages {
+            println!();
+            println!(
+                "{}",
+                console::style("Messages being sent to API:")
+                    .yellow()
+                    .bold()
+            );
+            for message in &self.messages {
+                let message_json = serde_json::to_string_pretty(message)
+                    .unwrap_or_else(|e| format!("Failed to serialize message: {e}"));
+                println!("{message_json}");
+            }
+            println!();
+        }
+
+        Ok(Some(request))
     }
 }
