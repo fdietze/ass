@@ -2,7 +2,7 @@
 
 ## Goals
 
-- be very close to how messaget+ased AI apis work. Try to minimize leaky abstractions. Everything can be fully understood and adjusted, like system prompts.
+- be very close to how message-based AI apis work. Try to minimize leaky abstractions. Everything can be fully understood and adjusted, like system prompts.
 - No TUI, use the scrollback of the terminal to see what happened.
 - the agent can be used via CLI, but also as a library to build higher-level workflows on top.
 - Very robust file editing tools that allow LLMs to edit large files with precise changes over many steps without re-reading the file.
