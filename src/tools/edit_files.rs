@@ -353,7 +353,7 @@ fn validate_anchor(
         Some((actual_content, actual_suffix)) => {
             if &expected_suffix != actual_suffix {
                 return Err(anyhow!(
-                    "Validation failed for '{op_name}': {anchor_name} suffix mismatch for LID '{lid_str}'. The line content is correct, but the file has been modified. Please re-read the file to get the latest LIDs."
+                    "Validation failed for '{op_name}': {anchor_name} LID '{lid_str}' is stale. The suffix does not match the file's current state, indicating the line has been modified. Please re-read the file to get an up-to-date file representation."
                 ));
             }
             let collapsed_actual = collapse_whitespace(actual_content);
@@ -420,7 +420,7 @@ fn validate_anchor(
 
             // If the content is also not found, fall back to the original error.
             return Err(anyhow!(
-                "Validation failed for '{op_name}': {anchor_name} LID '{lid_str}' not found in file '{}'.",
+                "Validation failed for '{op_name}': {anchor_name} LID '{lid_str}' not found in file '{}'. The line may have been deleted or modified. Please re-read the file to get an up-to-date file representation.",
                 file_state.path.display()
             ));
         }
